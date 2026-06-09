@@ -18,15 +18,15 @@
 - [x] 3.1 Map VISUM `OPERATOR` records to AequilibraE `agencies`.
 - [x] 3.2 Map VISUM `STOP`, `STOPAREA`, `STOPPOINT`, and fare-zone references to AequilibraE `stops` where representable.
 - [x] 3.3 Map VISUM transit systems such as `BUS`, `TRAM`, and `TRAIN` to AequilibraE route types, PCEs, and capacities with override support.
-- [ ] 3.4 Map `LINEROUTEITEM.NODENO` sequences to imported project nodes using `visum_node_no`.
+- [x] 3.4 Map `LINEROUTEITEM.NODENO` sequences to imported project nodes using `visum_node_no`.
 - [x] 3.5 Map `STOPPOINT` records to imported project nodes or links using `visum_node_no` and `visum_link_no`.
-- [ ] 3.6 Report unmapped transit systems, missing network source references, and unsupported source objects without silently dropping them.
+- [x] 3.6 Report unmapped transit systems, missing network source references, and unsupported source objects without silently dropping them.
 
 ## 4. Service Table Population
 
-- [ ] 4.1 Import line-route/time-profile combinations into `routes` as deterministic route patterns.
-- [ ] 4.2 Import successive stop pairs into `route_links` with stable sequence numbers and geometries.
-- [ ] 4.3 Import source network link sequences into `pattern_mapping` with correct AequilibraE link IDs and directions.
+- [x] 4.1 Import line-route/time-profile combinations into `routes` as deterministic route patterns.
+- [x] 4.2 Import successive stop pairs into `route_links` with stable sequence numbers and geometries.
+- [x] 4.3 Import source network link sequences into `pattern_mapping` with correct AequilibraE link IDs and directions.
 - [ ] 4.4 Import VISUM vehicle journeys into `trips` with deterministic trip IDs and direction values.
 - [ ] 4.5 Convert `TIMEPROFILEITEM` arrival/departure offsets plus `VEHJOURNEY.DEP` into `trips_schedule` seconds from service-day start.
 - [ ] 4.6 Trim schedules according to `FROMTPROFITEMINDEX` and `TOTPROFITEMINDEX`.

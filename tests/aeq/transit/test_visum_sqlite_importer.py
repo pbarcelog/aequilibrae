@@ -183,7 +183,15 @@ def _add_visum_reference_network(project):
             INSERT INTO links
                 (link_id, a_node, b_node, direction, distance, modes, link_type, visum_link_no, geometry)
             VALUES
-                (1, 10, 20, 0, 1.0, 't', 'default', 1000, GeomFromText('LINESTRING(0 0, 0.01 0)', 4326))
+                (1, 10, 15, 0, 0.5, 't', 'default', 1000, GeomFromText('LINESTRING(0 0, 0.005 0)', 4326))
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO links
+                (link_id, a_node, b_node, direction, distance, modes, link_type, visum_link_no, geometry)
+            VALUES
+                (2, 15, 20, 0, 0.5, 't', 'default', 1001, GeomFromText('LINESTRING(0.005 0, 0.01 0)', 4326))
             """
         )
 
@@ -221,7 +229,13 @@ def test_import_from_visum_sqlite_validates_source_reference_coverage(empty_proj
     assert report.mapping_coverage["linerouteitem_nodes"] == {"total": 3, "matched": 3, "missing": 0}
     assert report.mapping_coverage["stoppoints"] == {"total": 2, "matched": 2, "missing": 0}
     assert report.mapping_coverage["existing_transit_rows"]["stops"] == 0
-    assert report.inserted_counts == {"agencies": 1, "stops": 2}
+    assert report.inserted_counts == {
+        "agencies": 1,
+        "stops": 2,
+        "routes": 1,
+        "route_links": 1,
+        "pattern_mapping": 2,
+    }
     assert any(diag.code == "service-import-partial" for diag in report.warnings)
 
     with empty_project.transit_connection as conn:
@@ -234,6 +248,21 @@ def test_import_from_visum_sqlite_validates_source_reference_coverage(empty_proj
         ("100", "SP1", 1, None, "Point 1", "10", 3),
         ("200", "SP2", 1, 1, "Point 2", "20", 3),
     ]
+
+    with empty_project.transit_connection as conn:
+        routes = conn.execute(
+            "SELECT pattern_id, route_id, route, agency_id, shortname, route_type, pce FROM routes"
+        ).fetchall()
+        route_links = conn.execute(
+            "SELECT transit_link, pattern_id, seq, from_stop, to_stop FROM route_links"
+        ).fetchall()
+        pattern_mapping = conn.execute(
+            "SELECT pattern_id, seq, link, dir FROM pattern_mapping ORDER BY seq"
+        ).fetchall()
+
+    assert routes == [(1, 1, "B1", 1, "B1", 3, 4)]
+    assert route_links == [(1, 1, 0, 100, 200)]
+    assert pattern_mapping == [(1, 0, 1, 1), (1, 1, 2, 1)]
 
 
 def test_import_from_visum_sqlite_rejects_project_without_source_reference_columns(
@@ -260,7 +289,13 @@ def test_import_from_visum_sqlite_requires_overwrite_for_existing_service_data(
     assert not report.errors
     assert report.mapping_coverage["existing_transit_rows"]["agencies"] == 1
     assert report.mapping_coverage["cleared_transit_rows"]["agencies"] == 1
-    assert report.inserted_counts == {"agencies": 1, "stops": 2}
+    assert report.inserted_counts == {
+        "agencies": 1,
+        "stops": 2,
+        "routes": 1,
+        "route_links": 1,
+        "pattern_mapping": 2,
+    }
 
     with empty_project.transit_connection as conn:
         assert conn.execute("SELECT agency_id, agency FROM agencies").fetchall() == [(1, "Transit Operator")]

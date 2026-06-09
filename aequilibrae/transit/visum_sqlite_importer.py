@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Mapping
 
 import shapely
+from shapely.geometry import LineString
 
 from aequilibrae.project.network.visum_geojson_importer import VisumGeoJSONDiagnostic
 
@@ -151,11 +152,12 @@ class VisumSQLiteTransitImporter:
         self.report.diagnostics.extend(discovery.diagnostics)
         self.report.raise_for_errors()
 
-        with sqlite3.connect(self.path) as source_conn, self.project.db_connection as project_conn:
+        with sqlite3.connect(self.path) as source_conn, self.project.db_connection_spatial as project_conn:
             source_conn.row_factory = sqlite3.Row
             self._validate_network_source_columns(project_conn)
             self.report.raise_for_errors()
             self._validate_network_reference_coverage(source_conn, project_conn)
+            self._validate_route_link_coverage(source_conn, project_conn)
             self._validate_transit_system_mapping(source_conn)
             self.report.raise_for_errors()
 
@@ -170,11 +172,12 @@ class VisumSQLiteTransitImporter:
                     source_conn.row_factory = sqlite3.Row
                     self._insert_agencies(source_conn, transit_conn)
                     self._insert_stops(source_conn, project_conn, transit_conn)
+                    self._insert_patterns(source_conn, project_conn, transit_conn)
 
         self.report.add(
             "warning",
             "service-import-partial",
-            "VISUM SQLite transit operators and stops were imported; route patterns and schedules are pending",
+            "VISUM SQLite transit operators, stops, and route patterns were imported; trip schedules are pending",
         )
         if self.overwrite:
             self._invalidate_saved_graphs()
@@ -242,6 +245,35 @@ class VisumSQLiteTransitImporter:
                 "unmapped-stop-points",
                 "VISUM stop-point references are not covered by project nodes or links",
                 layer="STOPPOINT",
+            )
+
+    def _validate_route_link_coverage(
+        self,
+        source_conn: sqlite3.Connection,
+        project_conn: sqlite3.Connection,
+    ) -> None:
+        link_lookup = _project_link_lookup(project_conn)
+        route_items = _line_route_items(source_conn)
+        total_pairs = 0
+        matched_pairs = 0
+        missing_pairs = []
+        for route_key, items in route_items.items():
+            for first, second in zip(items[:-1], items[1:], strict=False):
+                total_pairs += 1
+                pair = (first["node_no"], second["node_no"])
+                if pair in link_lookup:
+                    matched_pairs += 1
+                else:
+                    missing_pairs.append((*route_key, first["index"], second["index"], *pair))
+
+        self._add_coverage("linerouteitem_node_pairs", total_pairs, matched_pairs)
+        if missing_pairs:
+            self.report.unmapped_records["linerouteitem_node_pairs"] = missing_pairs[:25]
+            self.report.add(
+                "error",
+                "unmapped-line-route-segments",
+                "VISUM line-route node pairs are not covered by project links",
+                layer="LINEROUTEITEM",
             )
 
     def _validate_overwrite_policy(self, conn: sqlite3.Connection) -> None:
@@ -406,6 +438,148 @@ class VisumSQLiteTransitImporter:
         )
         self.report.inserted_counts["stops"] = len(data)
 
+    def _insert_patterns(
+        self,
+        source_conn: sqlite3.Connection,
+        project_conn: sqlite3.Connection,
+        transit_conn: sqlite3.Connection,
+    ) -> None:
+        link_lookup = _project_link_lookup(project_conn)
+        route_items = _line_route_items(source_conn)
+        time_profile_items = _time_profile_items(source_conn)
+        time_profiles = source_conn.execute(
+            """
+            SELECT
+                tp.LINENAME,
+                tp.LINEROUTENAME,
+                tp.DIRECTIONCODE,
+                tp.NAME TIMEPROFILENAME,
+                l.TSYSCODE,
+                l.OPERATORNO
+            FROM "TIMEPROFILE" tp
+            INNER JOIN "LINE" l ON tp.LINENAME = l.NAME
+            ORDER BY tp.LINENAME, tp.LINEROUTENAME, tp.DIRECTIONCODE, tp.NAME
+            """
+        ).fetchall()
+
+        line_route_ids = {
+            line_name: idx + 1
+            for idx, line_name in enumerate(
+                sorted({row["LINENAME"] for row in time_profiles}),
+            )
+        }
+        route_rows = []
+        route_link_rows = []
+        pattern_mapping_rows = []
+        transit_link_id = 1
+        for pattern_id, profile in enumerate(time_profiles, start=1):
+            route_key = (profile["LINENAME"], profile["LINEROUTENAME"], profile["DIRECTIONCODE"])
+            profile_key = (*route_key, profile["TIMEPROFILENAME"])
+            items = route_items[route_key]
+            profile_items = time_profile_items[profile_key]
+            stop_items = _profile_stop_items(profile_items, items)
+            if len(stop_items) < 2:
+                self.report.add(
+                    "warning",
+                    "route-pattern-without-stop-pair",
+                    "VISUM time profile does not contain at least two importable stop points",
+                    layer="TIMEPROFILE",
+                    source_id="|".join(str(value) for value in profile_key),
+                )
+                continue
+
+            route_type = self.transit_system_mapping.get(str(profile["TSYSCODE"]).upper(), -1)
+            route_geometry = _route_geometry(items, link_lookup)
+            route_rows.append(
+                (
+                    pattern_id,
+                    line_route_ids[profile["LINENAME"]],
+                    str(profile["LINENAME"]),
+                    (
+                        int(profile["OPERATORNO"])
+                        if profile["OPERATORNO"] is not None
+                        else self._default_agency_id(source_conn)
+                    ),
+                    str(profile["LINENAME"]),
+                    f"{profile['LINEROUTENAME']} {profile['DIRECTIONCODE']}",
+                    f"VISUM TIMEPROFILE={profile['TIMEPROFILENAME']}",
+                    route_type,
+                    _default_pce(route_type),
+                    _default_seated_capacity(route_type),
+                    _default_total_capacity(route_type),
+                    route_geometry.wkb,
+                    4326,
+                )
+            )
+
+            for seq, (first, second) in enumerate(zip(items[:-1], items[1:], strict=False)):
+                mapped = link_lookup[(first["node_no"], second["node_no"])]
+                pattern_mapping_rows.append(
+                    (
+                        pattern_id,
+                        seq,
+                        mapped["link_id"],
+                        mapped["dir"],
+                        mapped["geometry"].wkb,
+                        4326,
+                    )
+                )
+
+            stop_by_lr_index = {item["lr_index"]: item for item in stop_items}
+            for seq, (first, second) in enumerate(zip(stop_items[:-1], stop_items[1:], strict=False)):
+                geometry = _route_link_geometry_between(items, stop_by_lr_index, first, second, link_lookup)
+                route_link_rows.append(
+                    (
+                        transit_link_id,
+                        pattern_id,
+                        seq,
+                        int(first["stop_point_no"]),
+                        int(second["stop_point_no"]),
+                        max(1, int(round(geometry.length * 111_000))),
+                        geometry.wkb,
+                        4326,
+                    )
+                )
+                transit_link_id += 1
+
+        transit_conn.executemany(
+            """
+            INSERT INTO routes (
+                pattern_id,
+                route_id,
+                route,
+                agency_id,
+                shortname,
+                longname,
+                description,
+                route_type,
+                pce,
+                seated_capacity,
+                total_capacity,
+                geometry
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_Multi(GeomFromWKB(?, ?)))
+            """,
+            route_rows,
+        )
+        transit_conn.executemany(
+            """
+            INSERT INTO route_links (transit_link, pattern_id, seq, from_stop, to_stop, distance, geometry)
+            VALUES (?, ?, ?, ?, ?, ?, GeomFromWKB(?, ?))
+            """,
+            route_link_rows,
+        )
+        transit_conn.executemany(
+            """
+            INSERT INTO pattern_mapping (pattern_id, seq, link, dir, geometry)
+            VALUES (?, ?, ?, ?, GeomFromWKB(?, ?))
+            """,
+            pattern_mapping_rows,
+        )
+        self.report.inserted_counts["routes"] = len(route_rows)
+        self.report.inserted_counts["route_links"] = len(route_link_rows)
+        self.report.inserted_counts["pattern_mapping"] = len(pattern_mapping_rows)
+
     def _default_agency_id(self, conn: sqlite3.Connection) -> int:
         row = conn.execute('SELECT NO FROM "OPERATOR" ORDER BY NO LIMIT 1').fetchone()
         return int(row["NO"]) if row is not None else 1
@@ -483,6 +657,37 @@ def _project_link_ids(conn: sqlite3.Connection) -> dict[int, int]:
     return {int(row[0]): int(row[1]) for row in rows if row[0] is not None}
 
 
+def _project_link_lookup(conn: sqlite3.Connection) -> dict[tuple[int, int], dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT
+            link_id,
+            a_node,
+            b_node,
+            direction,
+            AsBinary(geometry)
+        FROM links
+        WHERE a_node IS NOT NULL AND b_node IS NOT NULL
+        """
+    ).fetchall()
+    lookup = {}
+    for link_id, a_node, b_node, direction, geometry_wkb in rows:
+        geometry = shapely.from_wkb(geometry_wkb)
+        if direction in (0, 1):
+            lookup[(int(a_node), int(b_node))] = {
+                "link_id": int(link_id),
+                "dir": 1,
+                "geometry": geometry,
+            }
+        if direction in (0, -1):
+            lookup[(int(b_node), int(a_node))] = {
+                "link_id": int(link_id),
+                "dir": -1,
+                "geometry": _reverse_line(geometry),
+            }
+    return lookup
+
+
 def _stop_fare_zones(conn: sqlite3.Connection) -> dict[int, str]:
     if not _table_exists(conn, "STOPTOFAREZONE"):
         return {}
@@ -516,3 +721,121 @@ def _geometry_for_stop_point(
         return link_geometries[int(link_no)].interpolate(relpos, normalized=True)
 
     raise ValueError(f"Could not derive geometry for VISUM STOPPOINT {row['stop_point_no']}")
+
+
+def _line_route_items(conn: sqlite3.Connection) -> dict[tuple[str, str, str], list[dict[str, int | None]]]:
+    rows = conn.execute(
+        """
+        SELECT LINENAME, LINEROUTENAME, DIRECTIONCODE, "INDEX", NODENO, STOPPOINTNO
+        FROM "LINEROUTEITEM"
+        WHERE NODENO IS NOT NULL
+        ORDER BY LINENAME, LINEROUTENAME, DIRECTIONCODE, "INDEX"
+        """
+    ).fetchall()
+    items: dict[tuple[str, str, str], list[dict[str, int | None]]] = {}
+    for row in rows:
+        key = (str(row["LINENAME"]), str(row["LINEROUTENAME"]), str(row["DIRECTIONCODE"]))
+        items.setdefault(key, []).append(
+            {
+                "index": int(row["INDEX"]),
+                "node_no": int(row["NODENO"]),
+                "stop_point_no": None if row["STOPPOINTNO"] is None else int(row["STOPPOINTNO"]),
+            }
+        )
+    return items
+
+
+def _time_profile_items(conn: sqlite3.Connection) -> dict[tuple[str, str, str, str], list[dict[str, int]]]:
+    rows = conn.execute(
+        """
+        SELECT LINENAME, LINEROUTENAME, DIRECTIONCODE, TIMEPROFILENAME, "INDEX", LRITEMINDEX
+        FROM "TIMEPROFILEITEM"
+        ORDER BY LINENAME, LINEROUTENAME, DIRECTIONCODE, TIMEPROFILENAME, "INDEX"
+        """
+    ).fetchall()
+    items: dict[tuple[str, str, str, str], list[dict[str, int]]] = {}
+    for row in rows:
+        key = (
+            str(row["LINENAME"]),
+            str(row["LINEROUTENAME"]),
+            str(row["DIRECTIONCODE"]),
+            str(row["TIMEPROFILENAME"]),
+        )
+        items.setdefault(key, []).append({"index": int(row["INDEX"]), "lr_index": int(row["LRITEMINDEX"])})
+    return items
+
+
+def _profile_stop_items(profile_items, route_items) -> list[dict[str, int]]:
+    route_by_index = {item["index"]: item for item in route_items}
+    stop_items = []
+    for profile_item in profile_items:
+        route_item = route_by_index.get(profile_item["lr_index"])
+        if route_item is None or route_item["stop_point_no"] is None:
+            continue
+        stop_items.append(
+            {
+                "profile_index": profile_item["index"],
+                "lr_index": profile_item["lr_index"],
+                "stop_point_no": route_item["stop_point_no"],
+            }
+        )
+    return stop_items
+
+
+def _route_geometry(route_items, link_lookup: Mapping[tuple[int, int], dict[str, object]]) -> LineString:
+    lines = [
+        link_lookup[(first["node_no"], second["node_no"])]["geometry"]
+        for first, second in zip(route_items[:-1], route_items[1:], strict=False)
+    ]
+    return _combine_lines(lines)
+
+
+def _route_link_geometry_between(route_items, stop_by_lr_index, first_stop, second_stop, link_lookup) -> LineString:
+    first_pos = _route_item_position(route_items, first_stop["lr_index"])
+    second_pos = _route_item_position(route_items, second_stop["lr_index"])
+    segment_items = route_items[first_pos : second_pos + 1]
+    lines = [
+        link_lookup[(first["node_no"], second["node_no"])]["geometry"]
+        for first, second in zip(segment_items[:-1], segment_items[1:], strict=False)
+    ]
+    if lines:
+        return _combine_lines(lines)
+    first = stop_by_lr_index[first_stop["lr_index"]]
+    second = stop_by_lr_index[second_stop["lr_index"]]
+    return LineString([(first["node_no"], 0), (second["node_no"], 0)])
+
+
+def _route_item_position(route_items, lr_index: int) -> int:
+    for idx, item in enumerate(route_items):
+        if item["index"] == lr_index:
+            return idx
+    raise ValueError(f"Could not find VISUM route item index {lr_index}")
+
+
+def _combine_lines(lines) -> LineString:
+    coords = []
+    for line in lines:
+        line_coords = list(line.coords)
+        if not coords:
+            coords.extend(line_coords)
+        elif coords[-1] == line_coords[0]:
+            coords.extend(line_coords[1:])
+        else:
+            coords.extend(line_coords)
+    return LineString(coords)
+
+
+def _reverse_line(line) -> LineString:
+    return LineString(list(line.coords)[::-1])
+
+
+def _default_pce(route_type: int) -> float:
+    return {0: 5.0, 2: 5.0, 3: 4.0}.get(route_type, 2.0)
+
+
+def _default_seated_capacity(route_type: int) -> int:
+    return {0: 150, 2: 700, 3: 30}.get(route_type, 30)
+
+
+def _default_total_capacity(route_type: int) -> int:
+    return {0: 300, 2: 700, 3: 60}.get(route_type, 60)
