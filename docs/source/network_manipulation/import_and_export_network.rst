@@ -212,9 +212,19 @@ an equivalent GeoJSON import, preserved the source modal graph. The helper
 compares connectivity only; impedance differences from GeoJSON fallback values
 or SQLite epsilon connector costs should be checked separately.
 
-Public-transport service tables, turn restrictions, detector data, and other
-recognized VISUM tables are reported as deferred scope. They are not imported by
-this private-traffic network endpoint.
+Public-transport service tables are not imported by this private-traffic network
+endpoint. After importing the network, use
+``Project.transit.import_from_visum_sqlite()`` to import supported VISUM
+operators, stops, line routes, time profiles, vehicle journeys, and schedules
+into ``public_transport.sqlite``. The transit import requires the VISUM source
+identifier columns preserved by the network importer, including
+``visum_node_no``, ``visum_link_no``, and ``visum_zone_no``.
+
+The transit import reports recognized but deferred VISUM public-transport
+features, such as detailed fares, transfer-walk-time rules, vehicle blocking,
+coupling, depot data, and detailed calendar semantics. Turn restrictions,
+detector data, and other non-transit VISUM tables remain outside the private
+network endpoint as well.
 
 .. seealso::
 
@@ -224,6 +234,8 @@ this private-traffic network endpoint.
         Source graph validation helper
     * :ref:`import_from_visum_sqlite`
         Usage example
+    * :ref:`example_visum_sqlite_transit`
+        Public transport import example
 
 .. _aequilibrae_to_gmns:
 

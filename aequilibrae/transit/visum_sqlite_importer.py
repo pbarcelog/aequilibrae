@@ -52,7 +52,17 @@ REQUIRED_NETWORK_SOURCE_COLUMNS = {
 
 @dataclass
 class VisumSQLiteTransitReport:
-    """Diagnostics and provenance returned by a VISUM SQLite transit import."""
+    """Diagnostics and provenance returned by a VISUM SQLite transit import.
+
+    :ivar diagnostics: Import diagnostics, including validation errors, warnings, and informational messages.
+    :ivar source_table_counts: Row counts for detected VISUM public-transport source tables.
+    :ivar inserted_counts: Row counts written to AequilibraE transit service tables.
+    :ivar mapping_coverage: Coverage summaries for source-to-project joins, such as route-item nodes, stop points,
+        and route-item node pairs.
+    :ivar unmapped_records: Samples of source records that could not be mapped when validation fails.
+    :ivar deferred_features: Counts for recognized VISUM public-transport tables that are reported but not imported.
+    :ivar transit_system_mapping: Mapping from VISUM public-transport system codes to GTFS-style route type integers.
+    """
 
     diagnostics: list[VisumGeoJSONDiagnostic] = field(default_factory=list)
     source_table_counts: dict[str, int] = field(default_factory=dict)

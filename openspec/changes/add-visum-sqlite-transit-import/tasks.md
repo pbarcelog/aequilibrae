@@ -46,15 +46,15 @@
 
 ## 7. Documentation
 
-- [ ] 7.1 Document the VISUM SQLite transit import workflow, required prior network import, source-reference requirements, overwrite behavior, and deferred VISUM PT scope.
-- [ ] 7.2 Add API docstrings for the public transit import entry point and report object.
-- [ ] 7.3 Add or update an executable documentation example using compact local VISUM-like SQLite fixtures.
-- [ ] 7.4 Update public transport database docs if new importer behavior changes table usage or provenance expectations.
+- [x] 7.1 Document the VISUM SQLite transit import workflow, required prior network import, source-reference requirements, overwrite behavior, and deferred VISUM PT scope.
+- [x] 7.2 Add API docstrings for the public transit import entry point and report object.
+- [x] 7.3 Add or update an executable documentation example using compact local VISUM-like SQLite fixtures.
+- [x] 7.4 Update public transport database docs if new importer behavior changes table usage or provenance expectations.
 
 ## 8. Verification
 
-- [ ] 8.1 Run focused VISUM SQLite transit importer unit tests.
-- [ ] 8.2 Run focused transit graph and preload tests affected by the new import path.
-- [ ] 8.3 Run focused VISUM SQLite private-network importer tests to guard compatibility.
-- [ ] 8.4 Run relevant documentation/doctest checks for updated examples.
-- [ ] 8.5 Run `openspec.cmd status --change add-visum-sqlite-transit-import` and resolve incomplete artifacts before implementation review.
+- [x] 8.1 Run focused VISUM SQLite transit importer unit tests.
+- [x] 8.2 Run focused transit graph and preload tests affected by the new import path.
+- [x] 8.3 Run focused VISUM SQLite private-network importer tests to guard compatibility.
+- [x] 8.4 Run relevant documentation/doctest checks for updated examples.
+- [x] 8.5 Run `openspec.cmd status --change add-visum-sqlite-transit-import` and resolve incomplete artifacts before implementation review.

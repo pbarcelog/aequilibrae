@@ -93,7 +93,10 @@ class Transit(WorkerThread):
 
         The source project network must already contain VISUM source-reference fields from a compatible VISUM network
         import, such as ``visum_node_no``, ``visum_link_no``, and ``visum_zone_no``. Existing transit service data is
-        protected by default; pass ``overwrite=True`` when replacing populated transit tables.
+        protected by default; pass ``overwrite=True`` when replacing populated transit tables. The importer writes
+        supported operators, stop points, route patterns, network pattern mappings, trips, and stop schedules to
+        ``public_transport.sqlite``. Generated transit graph tables are not written directly; use
+        :meth:`create_graph` after the service import.
 
         :Arguments:
             **path** (:obj:`str` or :obj:`Path`): VISUM SQLite export file.
@@ -106,7 +109,7 @@ class Transit(WorkerThread):
 
         :Returns:
             :class:`aequilibrae.transit.visum_sqlite_importer.VisumSQLiteTransitReport`: Import diagnostics, source
-            row counts, mapping coverage, deferred feature counts, and inserted row counts.
+            row counts, mapping coverage, deferred feature counts, transit-system mapping, and inserted row counts.
         """
         importer = VisumSQLiteTransitImporter(
             self.project,
@@ -116,7 +119,7 @@ class Transit(WorkerThread):
         )
         report = importer.doWork()
 
-        self.logger.info("VISUM SQLite transit import validated successfully")
+        self.logger.info("VISUM SQLite transit imported successfully")
         return report
 
     def create_transit_database(self):
