@@ -40,9 +40,9 @@
 
 ## 6. Karlsruhe Smoke Checks
 
-- [ ] 6.1 Add an opt-in smoke test or validation script for `C:\Users\Pablo Barceló\Downloads\Karlsruhe\Karlsruhe-sqlite.sqlite3`.
-- [ ] 6.2 Validate Karlsruhe source coverage for route items, stop points, route patterns, vehicle journeys, and inserted transit table counts.
-- [ ] 6.3 Validate that the imported Karlsruhe transit data can build at least one transit graph over a practical time window.
+- [x] 6.1 Add an opt-in smoke test or validation script for `C:\Users\Pablo Barceló\Downloads\Karlsruhe\Karlsruhe-sqlite.sqlite3`.
+- [x] 6.2 Validate Karlsruhe source coverage for route items, stop points, route patterns, vehicle journeys, and inserted transit table counts.
+- [x] 6.3 Validate that the imported Karlsruhe transit data can build at least one transit graph over a practical time window.
 
 ## 7. Documentation
 

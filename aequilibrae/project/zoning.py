@@ -236,6 +236,12 @@ class Zoning(BasicTable):
         for zone_id, zone in self.__items.items():
             self.__geo_index.insert(feature_id=zone_id, geometry=zone.geometry)
 
+    def refresh(self):
+        """Refreshes all zones in memory from the project database."""
+        self.__items.clear()
+        if self.__has_zoning():
+            self.__load()
+
     def __has_zoning(self):
         with self.network.project.db_connection as conn:
             dt = conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()

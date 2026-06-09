@@ -136,6 +136,8 @@ class Transit(WorkerThread):
         'project.network.Periods' for more details.
         """
         period_id = kwargs.pop("period_id", self.periods.default_period.period_id)
+        if not self.project.zoning.all_zones():
+            self.project.zoning.refresh()
 
         graph = TransitGraphBuilder(self.project, period_id, **kwargs)
         graph.create_graph()

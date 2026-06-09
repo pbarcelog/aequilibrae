@@ -31,6 +31,12 @@ def pytest_addoption(parser):
         help="Folder with external VISUM GeoJSON files for opt-in importer smoke tests.",
     )
     group.addoption(
+        "--visum-karlsruhe-sqlite-file",
+        action="store",
+        default=None,
+        help="Karlsruhe VISUM SQLite file for opt-in network plus transit importer smoke tests.",
+    )
+    group.addoption(
         "--visum-expected-nodes",
         action="store",
         type=int,

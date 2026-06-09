@@ -5,6 +5,37 @@ import pytest
 
 from aequilibrae.transit.visum_sqlite_importer import VisumSQLiteTransitImporter, discover_visum_sqlite_transit
 
+KARLSRUHE_VISUM_MODE_MAPPING = {
+    "BIKE": "b",
+    "BUS": "t",
+    "CAR": "c",
+    "HGV": "h",
+    "PUTW": "p",
+    "TRAIN": "n",
+    "TRAM": "r",
+    "WALK": "w",
+}
+KARLSRUHE_EXPECTED_TRANSIT_SOURCE_COUNTS = {
+    "LINEROUTEITEM": 8432,
+    "STOPPOINT": 504,
+    "TIMEPROFILE": 226,
+    "VEHJOURNEY": 4749,
+}
+KARLSRUHE_EXPECTED_TRANSIT_COVERAGE = {
+    "linerouteitem_nodes": {"total": 1928, "matched": 1928, "missing": 0},
+    "stoppoints": {"total": 504, "matched": 504, "missing": 0},
+    "linerouteitem_node_pairs": {"total": 8044, "matched": 8044, "missing": 0},
+}
+KARLSRUHE_EXPECTED_TRANSIT_INSERTED_COUNTS = {
+    "agencies": 3,
+    "stops": 504,
+    "routes": 226,
+    "route_links": 2516,
+    "pattern_mapping": 9599,
+    "trips": 4749,
+    "trips_schedule": 76408,
+}
+
 
 def _create_visum_transit_sqlite(path: Path, *, omit_table: str | None = None) -> Path:
     conn = sqlite3.connect(path)
@@ -153,7 +184,8 @@ def _create_visum_transit_sqlite(path: Path, *, omit_table: str | None = None) -
     return path
 
 
-def _add_visum_reference_network(project):
+def _add_visum_reference_network(project, *, remap_middle_node: bool = False):
+    middle_node_id = 150 if remap_middle_node else 15
     with project.db_connection_spatial as conn:
         conn.execute("ALTER TABLE nodes ADD COLUMN visum_node_no INTEGER")
         conn.execute("ALTER TABLE nodes ADD COLUMN visum_zone_no INTEGER")
@@ -164,7 +196,7 @@ def _add_visum_reference_network(project):
             INSERT INTO nodes (node_id, is_centroid, modes, visum_node_no, geometry)
             VALUES (?, 0, 't', ?, GeomFromText(?, 4326))
             """,
-            [(10, 10, "POINT(0 0)"), (15, 15, "POINT(0.005 0)"), (20, 20, "POINT(0.01 0)")],
+            [(10, 10, "POINT(0 0)"), (middle_node_id, 15, "POINT(0.005 0)"), (20, 20, "POINT(0.01 0)")],
         )
         conn.execute(
             """
@@ -183,18 +215,20 @@ def _add_visum_reference_network(project):
             INSERT INTO links
                 (link_id, a_node, b_node, direction, distance, modes, link_type, visum_link_no, geometry)
             VALUES
-                (1, 10, 15, 0, 0.5, 't', 'default', 1000, GeomFromText('LINESTRING(0 0, 0.005 0)', 4326))
-            """
+                (1, 10, ?, 0, 0.5, 't', 'default', 1000, GeomFromText('LINESTRING(0 0, 0.005 0)', 4326))
+            """,
+            (middle_node_id,),
         )
         conn.execute(
             """
             INSERT INTO links
                 (link_id, a_node, b_node, direction, distance, modes, link_type, visum_link_no, geometry)
             VALUES
-                (2, 15, 20, 0, 0.5, 't', 'default', 1001, GeomFromText('LINESTRING(0.005 0, 0.01 0)', 4326))
-            """
+                (2, ?, 20, 0, 0.5, 't', 'default', 1001, GeomFromText('LINESTRING(0.005 0, 0.01 0)', 4326))
+            """,
+            (middle_node_id,),
         )
-    project.zoning._Zoning__load()
+    project.zoning.refresh()
 
 
 @pytest.fixture
@@ -272,6 +306,23 @@ def test_import_from_visum_sqlite_validates_source_reference_coverage(empty_proj
     assert pattern_mapping == [(1, 0, 1, 1), (1, 1, 2, 1)]
     assert trips == [(1, "B1-1", 0, 1), (2, "B1-2", 0, 1)]
     assert schedules == [(1, 0, 86280, 86280), (1, 1, 86580, 86580), (2, 0, 28800, 28800)]
+
+
+def test_import_from_visum_sqlite_maps_line_route_items_through_source_node_ids(
+    empty_project,
+    visum_transit_sqlite_file,
+):
+    _add_visum_reference_network(empty_project, remap_middle_node=True)
+
+    report = empty_project.transit.import_from_visum_sqlite(visum_transit_sqlite_file)
+
+    assert report.mapping_coverage["linerouteitem_node_pairs"] == {"total": 2, "matched": 2, "missing": 0}
+    with empty_project.transit_connection as conn:
+        pattern_mapping = conn.execute(
+            "SELECT pattern_id, seq, link, dir FROM pattern_mapping ORDER BY seq"
+        ).fetchall()
+
+    assert pattern_mapping == [(1, 0, 1, 1), (1, 1, 2, 1)]
 
 
 def test_import_from_visum_sqlite_rejects_project_without_source_reference_columns(
@@ -383,3 +434,49 @@ def test_import_from_visum_sqlite_graph_requires_mapped_route_segments(empty_pro
 
     with pytest.raises(ValueError, match="unmapped-line-route-segments"):
         empty_project.transit.import_from_visum_sqlite(visum_transit_sqlite_file)
+
+
+def _external_visum_karlsruhe_sqlite_file(request) -> Path:
+    path = request.config.getoption("--visum-karlsruhe-sqlite-file")
+    if path is None:
+        pytest.skip("Pass --visum-karlsruhe-sqlite-file to run the Karlsruhe VISUM SQLite transit smoke test")
+
+    path = Path(path)
+    if not path.exists():
+        pytest.fail(f"Karlsruhe VISUM SQLite file does not exist: {path}")
+    if not path.is_file():
+        pytest.fail(f"Karlsruhe VISUM SQLite input must be a file: {path}")
+    return path
+
+
+def test_external_karlsruhe_visum_sqlite_transit_import_builds_graph(empty_project, request):
+    path = _external_visum_karlsruhe_sqlite_file(request)
+
+    empty_project.network.create_from_visum_sqlite(
+        path,
+        mode_mapping=KARLSRUHE_VISUM_MODE_MAPPING,
+        accept_default_crs=True,
+    )
+    report = empty_project.transit.import_from_visum_sqlite(path)
+
+    assert not report.errors
+    assert {
+        key: report.source_table_counts[key] for key in KARLSRUHE_EXPECTED_TRANSIT_SOURCE_COUNTS
+    } == KARLSRUHE_EXPECTED_TRANSIT_SOURCE_COUNTS
+    for key, expected in KARLSRUHE_EXPECTED_TRANSIT_COVERAGE.items():
+        assert report.mapping_coverage[key] == expected
+    assert report.inserted_counts == KARLSRUHE_EXPECTED_TRANSIT_INSERTED_COUNTS
+
+    period = empty_project.network.periods.new_period(2, 7 * 3600, 9 * 3600, "AM smoke")
+    period.save()
+    graph = empty_project.transit.create_graph(
+        period_id=2,
+        with_inner_stop_transfers=False,
+        with_outer_stop_transfers=False,
+        with_walking_edges=False,
+        blocking_centroid_flows=False,
+        connector_method="nearest_neighbour",
+    )
+
+    assert len(graph.vertices) == 4866
+    assert len(graph.edges) == 8118

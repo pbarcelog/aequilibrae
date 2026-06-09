@@ -254,7 +254,7 @@ class VisumSQLiteTransitImporter:
         project_conn: sqlite3.Connection,
     ) -> None:
         link_lookup = _project_link_lookup(project_conn)
-        route_items = _line_route_items(source_conn)
+        route_items = _line_route_items(source_conn, _project_node_ids(project_conn))
         total_pairs = 0
         matched_pairs = 0
         missing_pairs = []
@@ -265,7 +265,8 @@ class VisumSQLiteTransitImporter:
                 if pair in link_lookup:
                     matched_pairs += 1
                 else:
-                    missing_pairs.append((*route_key, first["index"], second["index"], *pair))
+                    source_pair = (first["source_node_no"], second["source_node_no"])
+                    missing_pairs.append((*route_key, first["index"], second["index"], *source_pair))
 
         self._add_coverage("linerouteitem_node_pairs", total_pairs, matched_pairs)
         if missing_pairs:
@@ -446,7 +447,7 @@ class VisumSQLiteTransitImporter:
         transit_conn: sqlite3.Connection,
     ) -> None:
         link_lookup = _project_link_lookup(project_conn)
-        route_items = _line_route_items(source_conn)
+        route_items = _line_route_items(source_conn, _project_node_ids(project_conn))
         time_profile_items = _time_profile_items(source_conn)
         time_profiles = source_conn.execute(
             """
@@ -717,6 +718,11 @@ def _project_node_geometries(conn: sqlite3.Connection) -> dict[int, object]:
     return {int(row[0]): shapely.from_wkb(row[1]) for row in rows if row[1] is not None}
 
 
+def _project_node_ids(conn: sqlite3.Connection) -> dict[int, int]:
+    rows = conn.execute("SELECT visum_node_no, node_id FROM nodes WHERE visum_node_no IS NOT NULL").fetchall()
+    return {int(row[0]): int(row[1]) for row in rows if row[0] is not None}
+
+
 def _project_link_geometries(conn: sqlite3.Connection) -> dict[int, object]:
     rows = conn.execute(
         "SELECT visum_link_no, AsBinary(geometry) FROM links WHERE visum_link_no IS NOT NULL"
@@ -795,7 +801,10 @@ def _geometry_for_stop_point(
     raise ValueError(f"Could not derive geometry for VISUM STOPPOINT {row['stop_point_no']}")
 
 
-def _line_route_items(conn: sqlite3.Connection) -> dict[tuple[str, str, str], list[dict[str, int | None]]]:
+def _line_route_items(
+    conn: sqlite3.Connection,
+    project_node_ids: Mapping[int, int] | None = None,
+) -> dict[tuple[str, str, str], list[dict[str, int | None]]]:
     rows = conn.execute(
         """
         SELECT LINENAME, LINEROUTENAME, DIRECTIONCODE, "INDEX", NODENO, STOPPOINTNO
@@ -807,10 +816,12 @@ def _line_route_items(conn: sqlite3.Connection) -> dict[tuple[str, str, str], li
     items: dict[tuple[str, str, str], list[dict[str, int | None]]] = {}
     for row in rows:
         key = (str(row["LINENAME"]), str(row["LINEROUTENAME"]), str(row["DIRECTIONCODE"]))
+        source_node_no = int(row["NODENO"])
         items.setdefault(key, []).append(
             {
                 "index": int(row["INDEX"]),
-                "node_no": int(row["NODENO"]),
+                "node_no": (project_node_ids or {}).get(source_node_no, source_node_no),
+                "source_node_no": source_node_no,
                 "stop_point_no": None if row["STOPPOINTNO"] is None else int(row["STOPPOINTNO"]),
             }
         )
