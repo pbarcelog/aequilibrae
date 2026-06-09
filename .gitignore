@@ -98,6 +98,12 @@ build/
 .coverage
 .coverage.*
 coverage.xml
+.pytest_cache/
+.pytest-tmp*/
+.pytest-temp/
+
+# Generated local VISUM import smoke-test projects
+karlsruhe-*-example*/
 
 #### End snippet
 .DS_Store

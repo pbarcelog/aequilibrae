@@ -21,6 +21,8 @@ from aequilibrae.project.network.osm.osm_builder import OSMBuilder
 from aequilibrae.project.network.osm.osm_downloader import OSMDownloader
 from aequilibrae.project.network.osm.place_getter import placegetter
 from aequilibrae.project.network.periods import Periods
+from aequilibrae.project.network.visum_geojson_importer import VisumGeoJSONImporter, VisumGeoJSONReport
+from aequilibrae.project.network.visum_sqlite_importer import VisumSQLiteImporter, VisumSQLiteReport
 from aequilibrae.project.project_creation import req_link_flds, req_node_flds, protected_fields
 from aequilibrae.utils.aeq_signal import SIGNAL
 from aequilibrae.utils.interface.worker_thread import WorkerThread
@@ -251,6 +253,150 @@ class Network(WorkerThread):
 
         self.logger.info("Network built successfully")
 
+    def create_from_visum_geojson(
+        self,
+        path_or_layers,
+        *,
+        mode_mapping: dict[str, str] | None = None,
+        ignored_transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
+        link_type_mapping: dict[object, str] | None = None,
+        source_crs: str | int | None = None,
+        accept_default_crs: bool = False,
+        allow_non_empty: bool = False,
+        geometry_tolerance: float = 1e-6,
+        duplicate_node_policy: str = "offset",
+        duplicate_node_offset_meters: float = 0.25,
+    ) -> VisumGeoJSONReport:
+        """
+        Creates an AequilibraE private-traffic network from VISUM GeoJSON layers.
+
+        :Arguments:
+            **path_or_layers** (:obj:`str`, :obj:`Path`, or :obj:`dict`): Folder with conventional VISUM GeoJSON
+            layer names, or an explicit mapping from layer names to files.
+
+            **mode_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM transport systems to single-character
+            AequilibraE mode IDs. Defaults to ``{"CAR": "c", "HGV": "h"}``.
+
+            **ignored_transport_systems** (:obj:`set`, :obj:`list`, or :obj:`tuple`, *Optional*): VISUM transport
+            systems to ignore explicitly. Any transport system outside ``mode_mapping`` must be mapped or ignored.
+
+            **link_type_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM link class/type values to
+            AequilibraE link type names.
+
+            **source_crs** (:obj:`str` or :obj:`int`, *Optional*): CRS to assign to layers that do not declare one.
+
+            **accept_default_crs** (:obj:`bool`, *Optional*): Accept ``EPSG:4326`` for layers without CRS metadata.
+
+            **allow_non_empty** (:obj:`bool`, *Optional*): Allow importing into a project that already has links.
+
+            **geometry_tolerance** (:obj:`float`, *Optional*): Maximum coordinate-unit distance allowed between VISUM
+            topology references and line endpoints.
+
+            **duplicate_node_policy** (:obj:`str`, *Optional*): Policy for VISUM nodes with identical coordinates.
+            ``"offset"`` preserves source topology with a tiny deterministic coordinate offset. ``"error"`` rejects
+            coincident source nodes before database writes.
+
+            **duplicate_node_offset_meters** (:obj:`float`, *Optional*): Approximate offset distance used when
+            ``duplicate_node_policy="offset"``.
+
+        :Returns:
+            :class:`aequilibrae.project.network.visum_geojson_importer.VisumGeoJSONReport`: Import diagnostics,
+            mapping choices, field inventory, imported row counts, and source-record references.
+        """
+
+        importer = VisumGeoJSONImporter(
+            self,
+            path_or_layers,
+            mode_mapping=mode_mapping,
+            ignored_transport_systems=ignored_transport_systems,
+            link_type_mapping=link_type_mapping,
+            source_crs=source_crs,
+            accept_default_crs=accept_default_crs,
+            allow_non_empty=allow_non_empty,
+            geometry_tolerance=geometry_tolerance,
+            duplicate_node_policy=duplicate_node_policy,
+            duplicate_node_offset_meters=duplicate_node_offset_meters,
+        )
+        report = importer.doWork()
+
+        self.logger.info("VISUM GeoJSON network imported successfully")
+        return report
+
+    def create_from_visum_sqlite(
+        self,
+        path,
+        *,
+        mode_mapping: dict[str, str] | None = None,
+        ignored_transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
+        link_type_mapping: dict[object, str] | None = None,
+        source_crs: str | int | None = None,
+        accept_default_crs: bool = False,
+        allow_non_empty: bool = False,
+        geometry_tolerance: float = 1e-6,
+        duplicate_node_policy: str = "offset",
+        duplicate_node_offset_meters: float = 0.25,
+        connector_epsilon_minutes: float = 1e-6,
+    ) -> VisumSQLiteReport:
+        """
+        Creates an AequilibraE private-traffic network from a VISUM SQLite export.
+
+        :Arguments:
+            **path** (:obj:`str` or :obj:`Path`): VISUM SQLite export file.
+
+            **mode_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM transport systems to single-character
+            AequilibraE mode IDs. Defaults to ``{"CAR": "c", "HGV": "h"}``.
+
+            **ignored_transport_systems** (:obj:`set`, :obj:`list`, or :obj:`tuple`, *Optional*): VISUM transport
+            systems to ignore explicitly. Any transport system outside ``mode_mapping`` must be mapped or ignored.
+
+            **link_type_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM link class/type values to
+            AequilibraE link type names.
+
+            **source_crs** (:obj:`str` or :obj:`int`, *Optional*): CRS to use instead of
+            ``NETWORK.PROJECTIONDEFINITION``.
+
+            **accept_default_crs** (:obj:`bool`, *Optional*): Accept the importer's default CRS when the SQLite export
+            does not provide a parseable CRS.
+
+            **allow_non_empty** (:obj:`bool`, *Optional*): Allow importing into a project that already has links.
+
+            **geometry_tolerance** (:obj:`float`, *Optional*): Maximum coordinate-unit distance allowed between VISUM
+            topology references and reconstructed line endpoints.
+
+            **duplicate_node_policy** (:obj:`str`, *Optional*): Policy for VISUM nodes with identical coordinates.
+            ``"offset"`` preserves source topology with a tiny deterministic coordinate offset. ``"error"`` rejects
+            coincident source nodes before database writes.
+
+            **duplicate_node_offset_meters** (:obj:`float`, *Optional*): Approximate offset distance used when
+            ``duplicate_node_policy="offset"``.
+
+            **connector_epsilon_minutes** (:obj:`float`, *Optional*): Positive travel-time cost used when a VISUM
+            SQLite connector explicitly stores zero private-traffic travel time.
+
+        :Returns:
+            :class:`aequilibrae.project.network.visum_sqlite_importer.VisumSQLiteReport`: Import diagnostics,
+            mapping choices, field inventory, imported row counts, and source-record references.
+        """
+
+        importer = VisumSQLiteImporter(
+            self,
+            path,
+            mode_mapping=mode_mapping,
+            ignored_transport_systems=ignored_transport_systems,
+            link_type_mapping=link_type_mapping,
+            source_crs=source_crs,
+            accept_default_crs=accept_default_crs,
+            allow_non_empty=allow_non_empty,
+            geometry_tolerance=geometry_tolerance,
+            duplicate_node_policy=duplicate_node_policy,
+            duplicate_node_offset_meters=duplicate_node_offset_meters,
+            connector_epsilon_minutes=connector_epsilon_minutes,
+        )
+        report = importer.doWork()
+
+        self.logger.info("VISUM SQLite network imported successfully")
+        return report
+
     def export_to_gmns(self, path: str):
         """
         Exports AequilibraE network to csv files in GMNS format.
@@ -345,7 +491,20 @@ class Network(WorkerThread):
             # For any link in net that doesn't support mode 'm', set a_node = b_node (these will be culled when
             # the compressed graph representation is created)
             net = pd.DataFrame(data, copy=True)
-            net.loc[~net.modes.str.contains(m), "b_node"] = net.loc[~net.modes.str.contains(m), "a_node"]
+            excluded = ~net.modes.str.contains(m, na=False)
+            positive_fields = {"distance", "travel_time", "capacity", "speed"}
+            numeric_fields = [
+                field
+                for field in net.select_dtypes(np.number).columns
+                if field not in {"link_id", "a_node", "b_node", "direction", "ogc_fid"}
+                and not field.endswith("_id")
+                and not field.endswith("_no")
+                and (field[:-3] if field.endswith(("_ab", "_ba")) else field) in positive_fields
+            ]
+            for field in numeric_fields:
+                invalid = net[field].isna() | (net[field] <= 0)
+                net.loc[excluded & invalid, field] = 1.0
+            net.loc[excluded, "b_node"] = net.loc[excluded, "a_node"]
 
             g = Graph()
             g.mode = m
