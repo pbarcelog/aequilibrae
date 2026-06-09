@@ -11,6 +11,7 @@ from aequilibrae.project.project_creation import initialize_tables
 from aequilibrae.reference_files import spatialite_database
 from aequilibrae.transit.lib_gtfs import GTFSRouteSystemBuilder
 from aequilibrae.transit.transit_graph_builder import TransitGraphBuilder
+from aequilibrae.transit.visum_sqlite_importer import VisumSQLiteTransitImporter, VisumSQLiteTransitReport
 from aequilibrae.utils.aeq_signal import SIGNAL
 from aequilibrae.utils.get_table import get_geo_table
 from aequilibrae.utils.interface.worker_thread import WorkerThread
@@ -79,6 +80,44 @@ class Transit(WorkerThread):
         gtfs.signal = self.transit
         gtfs.gtfs_data.signal = self.transit
         return gtfs
+
+    def import_from_visum_sqlite(
+        self,
+        path,
+        *,
+        overwrite: bool = False,
+        transit_system_mapping: dict[str, int] | None = None,
+    ) -> VisumSQLiteTransitReport:
+        """
+        Imports public transport service data from a VISUM SQLite export.
+
+        The source project network must already contain VISUM source-reference fields from a compatible VISUM network
+        import, such as ``visum_node_no``, ``visum_link_no``, and ``visum_zone_no``. Existing transit service data is
+        protected by default; pass ``overwrite=True`` when replacing populated transit tables.
+
+        :Arguments:
+            **path** (:obj:`str` or :obj:`Path`): VISUM SQLite export file.
+
+            **overwrite** (:obj:`bool`, *Optional*): Allow replacing existing transit service data. Defaults to
+            ``False``.
+
+            **transit_system_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM transit system codes to
+            GTFS-style route type integers. Defaults include ``TRAM=0``, ``TRAIN=2``, and ``BUS=3``.
+
+        :Returns:
+            :class:`aequilibrae.transit.visum_sqlite_importer.VisumSQLiteTransitReport`: Import diagnostics, source
+            row counts, mapping coverage, deferred feature counts, and inserted row counts.
+        """
+        importer = VisumSQLiteTransitImporter(
+            self.project,
+            path,
+            overwrite=overwrite,
+            transit_system_mapping=transit_system_mapping,
+        )
+        report = importer.doWork()
+
+        self.logger.info("VISUM SQLite transit import validated successfully")
+        return report
 
     def create_transit_database(self):
         """Creates the public transport database"""
