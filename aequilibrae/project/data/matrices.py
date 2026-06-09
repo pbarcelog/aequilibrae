@@ -187,10 +187,12 @@ class Matrices:
                 raise ValueError(f"There is already a matrix record for file name ({destination_name.name}).")
 
         matrix = AequilibraeMatrix()
+        loaded = False
         try:
             matrix.load(source)
+            loaded = True
         finally:
-            if matrix.cores > 0:
+            if loaded:
                 matrix.close()
 
         matrix_folder = Path(self.fldr)

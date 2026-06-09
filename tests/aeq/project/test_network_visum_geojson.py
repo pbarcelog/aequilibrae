@@ -638,14 +638,17 @@ def test_mode_excluded_missing_fields_do_not_poison_car_graph(empty_project, vis
     )
     with empty_project.db_connection as conn:
         transit_link_id = conn.execute("select link_id from links where visum_link_no=200").fetchone()[0]
+        conn.execute("ALTER TABLE links ADD COLUMN custom_zero NUMERIC")
+        conn.execute("UPDATE links SET custom_zero=0")
     empty_project.network.build_graphs(
-        fields=["distance", "travel_time_ab", "travel_time_ba", "capacity_ab", "capacity_ba"], modes=["c"]
+        fields=["distance", "travel_time_ab", "travel_time_ba", "capacity_ab", "capacity_ba", "custom_zero"], modes=["c"]
     )
 
     graph = empty_project.network.graphs["c"].graph
     transit_self_loop = graph[graph.link_id == transit_link_id]
 
     assert transit_self_loop.a_node.eq(transit_self_loop.b_node).all()
+    assert transit_self_loop.custom_zero.eq(0).all()
     assert not graph.travel_time.isna().any()
     assert not graph.capacity.isna().any()
 

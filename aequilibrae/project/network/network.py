@@ -257,10 +257,10 @@ class Network(WorkerThread):
         self,
         path_or_layers,
         *,
-        mode_mapping: dict[str, str] = None,
-        ignored_transport_systems: set[str] | list[str] | tuple[str, ...] = None,
-        link_type_mapping: dict[object, str] = None,
-        source_crs: str | int = None,
+        mode_mapping: dict[str, str] | None = None,
+        ignored_transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
+        link_type_mapping: dict[object, str] | None = None,
+        source_crs: str | int | None = None,
         accept_default_crs: bool = False,
         allow_non_empty: bool = False,
         geometry_tolerance: float = 1e-6,
@@ -326,10 +326,10 @@ class Network(WorkerThread):
         self,
         path,
         *,
-        mode_mapping: dict[str, str] = None,
-        ignored_transport_systems: set[str] | list[str] | tuple[str, ...] = None,
-        link_type_mapping: dict[object, str] = None,
-        source_crs: str | int = None,
+        mode_mapping: dict[str, str] | None = None,
+        ignored_transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
+        link_type_mapping: dict[object, str] | None = None,
+        source_crs: str | int | None = None,
         accept_default_crs: bool = False,
         allow_non_empty: bool = False,
         geometry_tolerance: float = 1e-6,
@@ -492,12 +492,14 @@ class Network(WorkerThread):
             # the compressed graph representation is created)
             net = pd.DataFrame(data, copy=True)
             excluded = ~net.modes.str.contains(m, na=False)
+            positive_fields = {"distance", "travel_time", "capacity", "speed"}
             numeric_fields = [
                 field
                 for field in net.select_dtypes(np.number).columns
                 if field not in {"link_id", "a_node", "b_node", "direction", "ogc_fid"}
                 and not field.endswith("_id")
                 and not field.endswith("_no")
+                and (field[:-3] if field.endswith(("_ab", "_ba")) else field) in positive_fields
             ]
             for field in numeric_fields:
                 invalid = net[field].isna() | (net[field] <= 0)
