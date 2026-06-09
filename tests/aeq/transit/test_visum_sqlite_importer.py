@@ -235,8 +235,10 @@ def test_import_from_visum_sqlite_validates_source_reference_coverage(empty_proj
         "routes": 1,
         "route_links": 1,
         "pattern_mapping": 2,
+        "trips": 2,
+        "trips_schedule": 3,
     }
-    assert any(diag.code == "service-import-partial" for diag in report.warnings)
+    assert any(diag.code == "service-import-complete" for diag in report.diagnostics)
 
     with empty_project.transit_connection as conn:
         assert conn.execute("SELECT agency_id, agency FROM agencies").fetchall() == [(1, "Transit Operator")]
@@ -259,10 +261,16 @@ def test_import_from_visum_sqlite_validates_source_reference_coverage(empty_proj
         pattern_mapping = conn.execute(
             "SELECT pattern_id, seq, link, dir FROM pattern_mapping ORDER BY seq"
         ).fetchall()
+        trips = conn.execute("SELECT trip_id, trip, dir, pattern_id FROM trips ORDER BY trip_id").fetchall()
+        schedules = conn.execute(
+            "SELECT trip_id, seq, arrival, departure FROM trips_schedule ORDER BY trip_id, seq"
+        ).fetchall()
 
     assert routes == [(1, 1, "B1", 1, "B1", 3, 4)]
     assert route_links == [(1, 1, 0, 100, 200)]
     assert pattern_mapping == [(1, 0, 1, 1), (1, 1, 2, 1)]
+    assert trips == [(1, "B1-1", 0, 1), (2, "B1-2", 0, 1)]
+    assert schedules == [(1, 0, 86280, 86280), (1, 1, 86580, 86580), (2, 0, 28800, 28800)]
 
 
 def test_import_from_visum_sqlite_rejects_project_without_source_reference_columns(
@@ -295,6 +303,8 @@ def test_import_from_visum_sqlite_requires_overwrite_for_existing_service_data(
         "routes": 1,
         "route_links": 1,
         "pattern_mapping": 2,
+        "trips": 2,
+        "trips_schedule": 3,
     }
 
     with empty_project.transit_connection as conn:

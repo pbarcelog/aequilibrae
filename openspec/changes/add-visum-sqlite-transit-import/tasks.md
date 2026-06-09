@@ -27,10 +27,10 @@
 - [x] 4.1 Import line-route/time-profile combinations into `routes` as deterministic route patterns.
 - [x] 4.2 Import successive stop pairs into `route_links` with stable sequence numbers and geometries.
 - [x] 4.3 Import source network link sequences into `pattern_mapping` with correct AequilibraE link IDs and directions.
-- [ ] 4.4 Import VISUM vehicle journeys into `trips` with deterministic trip IDs and direction values.
-- [ ] 4.5 Convert `TIMEPROFILEITEM` arrival/departure offsets plus `VEHJOURNEY.DEP` into `trips_schedule` seconds from service-day start.
-- [ ] 4.6 Trim schedules according to `FROMTPROFITEMINDEX` and `TOTPROFITEMINDEX`.
-- [ ] 4.7 Preserve monotonic schedule values for journeys that cross midnight.
+- [x] 4.4 Import VISUM vehicle journeys into `trips` with deterministic trip IDs and direction values.
+- [x] 4.5 Convert `TIMEPROFILEITEM` arrival/departure offsets plus `VEHJOURNEY.DEP` into `trips_schedule` seconds from service-day start.
+- [x] 4.6 Trim schedules according to `FROMTPROFITEMINDEX` and `TOTPROFITEMINDEX`.
+- [x] 4.7 Preserve monotonic schedule values for journeys that cross midnight.
 
 ## 5. Graph And Preload Readiness
 

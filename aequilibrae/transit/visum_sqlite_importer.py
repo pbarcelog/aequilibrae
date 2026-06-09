@@ -173,11 +173,12 @@ class VisumSQLiteTransitImporter:
                     self._insert_agencies(source_conn, transit_conn)
                     self._insert_stops(source_conn, project_conn, transit_conn)
                     self._insert_patterns(source_conn, project_conn, transit_conn)
+                    self._insert_trips(source_conn, transit_conn)
 
         self.report.add(
-            "warning",
-            "service-import-partial",
-            "VISUM SQLite transit operators, stops, and route patterns were imported; trip schedules are pending",
+            "info",
+            "service-import-complete",
+            "VISUM SQLite transit service tables were imported",
         )
         if self.overwrite:
             self._invalidate_saved_graphs()
@@ -580,6 +581,77 @@ class VisumSQLiteTransitImporter:
         self.report.inserted_counts["route_links"] = len(route_link_rows)
         self.report.inserted_counts["pattern_mapping"] = len(pattern_mapping_rows)
 
+    def _insert_trips(self, source_conn: sqlite3.Connection, transit_conn: sqlite3.Connection) -> None:
+        pattern_ids = _time_profile_pattern_ids(source_conn)
+        profile_items = _time_profile_items_with_times(source_conn)
+        journeys = source_conn.execute(
+            """
+            SELECT
+                NO,
+                NAME,
+                DEP,
+                LINENAME,
+                LINEROUTENAME,
+                DIRECTIONCODE,
+                TIMEPROFILENAME,
+                FROMTPROFITEMINDEX,
+                TOTPROFITEMINDEX
+            FROM "VEHJOURNEY"
+            ORDER BY NO
+            """
+        ).fetchall()
+        trip_rows = []
+        schedule_rows = []
+        skipped = []
+        for journey in journeys:
+            profile_key = (
+                str(journey["LINENAME"]),
+                str(journey["LINEROUTENAME"]),
+                str(journey["DIRECTIONCODE"]),
+                str(journey["TIMEPROFILENAME"]),
+            )
+            pattern_id = pattern_ids.get(profile_key)
+            if pattern_id is None or profile_key not in profile_items:
+                skipped.append(int(journey["NO"]))
+                continue
+
+            schedule = _journey_schedule_seconds(journey, profile_items[profile_key])
+            if not schedule:
+                skipped.append(int(journey["NO"]))
+                continue
+
+            trip_id = int(journey["NO"])
+            trip_rows.append(
+                (
+                    trip_id,
+                    _clean_text(journey["NAME"], str(trip_id)),
+                    _trip_direction(journey),
+                    pattern_id,
+                )
+            )
+            for seq, (arrival, departure) in enumerate(schedule):
+                schedule_rows.append((trip_id, seq, arrival, departure))
+
+        if skipped:
+            self.report.unmapped_records["vehicle_journeys"] = skipped[:25]
+            self.report.add(
+                "warning",
+                "skipped-vehicle-journeys",
+                "Some VISUM vehicle journeys referenced route patterns that were not imported",
+                layer="VEHJOURNEY",
+            )
+
+        transit_conn.executemany(
+            "INSERT INTO trips (trip_id, trip, dir, pattern_id) VALUES (?, ?, ?, ?)",
+            trip_rows,
+        )
+        transit_conn.executemany(
+            "INSERT INTO trips_schedule (trip_id, seq, arrival, departure) VALUES (?, ?, ?, ?)",
+            schedule_rows,
+        )
+        self.report.inserted_counts["trips"] = len(trip_rows)
+        self.report.inserted_counts["trips_schedule"] = len(schedule_rows)
+
     def _default_agency_id(self, conn: sqlite3.Connection) -> int:
         row = conn.execute('SELECT NO FROM "OPERATOR" ORDER BY NO LIMIT 1').fetchone()
         return int(row["NO"]) if row is not None else 1
@@ -765,6 +837,52 @@ def _time_profile_items(conn: sqlite3.Connection) -> dict[tuple[str, str, str, s
     return items
 
 
+def _time_profile_items_with_times(conn: sqlite3.Connection) -> dict[tuple[str, str, str, str], list[dict[str, int]]]:
+    rows = conn.execute(
+        """
+        SELECT LINENAME, LINEROUTENAME, DIRECTIONCODE, TIMEPROFILENAME, "INDEX", ARR, DEP
+        FROM "TIMEPROFILEITEM"
+        ORDER BY LINENAME, LINEROUTENAME, DIRECTIONCODE, TIMEPROFILENAME, "INDEX"
+        """
+    ).fetchall()
+    items: dict[tuple[str, str, str, str], list[dict[str, int]]] = {}
+    for row in rows:
+        key = (
+            str(row["LINENAME"]),
+            str(row["LINEROUTENAME"]),
+            str(row["DIRECTIONCODE"]),
+            str(row["TIMEPROFILENAME"]),
+        )
+        items.setdefault(key, []).append(
+            {
+                "index": int(row["INDEX"]),
+                "arrival": _parse_time_seconds(row["ARR"]),
+                "departure": _parse_time_seconds(row["DEP"]),
+            }
+        )
+    for values in items.values():
+        _make_profile_offsets_monotonic(values)
+    return items
+
+
+def _time_profile_pattern_ids(conn: sqlite3.Connection) -> dict[tuple[str, str, str, str], int]:
+    rows = conn.execute(
+        """
+        SELECT
+            LINENAME,
+            LINEROUTENAME,
+            DIRECTIONCODE,
+            NAME TIMEPROFILENAME
+        FROM "TIMEPROFILE"
+        ORDER BY LINENAME, LINEROUTENAME, DIRECTIONCODE, NAME
+        """
+    ).fetchall()
+    return {
+        (str(row["LINENAME"]), str(row["LINEROUTENAME"]), str(row["DIRECTIONCODE"]), str(row["TIMEPROFILENAME"])): idx
+        for idx, row in enumerate(rows, start=1)
+    }
+
+
 def _profile_stop_items(profile_items, route_items) -> list[dict[str, int]]:
     route_by_index = {item["index"]: item for item in route_items}
     stop_items = []
@@ -839,3 +957,52 @@ def _default_seated_capacity(route_type: int) -> int:
 
 def _default_total_capacity(route_type: int) -> int:
     return {0: 300, 2: 700, 3: 60}.get(route_type, 60)
+
+
+def _journey_schedule_seconds(journey: sqlite3.Row, profile_items: list[dict[str, int]]) -> list[tuple[int, int]]:
+    from_index = int(journey["FROMTPROFITEMINDEX"])
+    to_index = int(journey["TOTPROFITEMINDEX"])
+    selected = [item for item in profile_items if from_index <= item["index"] <= to_index]
+    if not selected:
+        return []
+    from_item = next((item for item in selected if item["index"] == from_index), selected[0])
+    base_seconds = _parse_time_seconds(journey["DEP"]) - from_item["departure"]
+    return [
+        (
+            int(base_seconds + item["arrival"]),
+            int(base_seconds + item["departure"]),
+        )
+        for item in selected
+    ]
+
+
+def _make_profile_offsets_monotonic(items: list[dict[str, int]]) -> None:
+    day_offset = 0
+    previous_departure = None
+    for item in items:
+        arrival = item["arrival"] + day_offset
+        departure = item["departure"] + day_offset
+        if previous_departure is not None:
+            while arrival < previous_departure:
+                day_offset += 86_400
+                arrival = item["arrival"] + day_offset
+                departure = item["departure"] + day_offset
+        while departure < arrival:
+            departure += 86_400
+        item["arrival"] = arrival
+        item["departure"] = departure
+        previous_departure = departure
+
+
+def _parse_time_seconds(value) -> int:
+    if value is None:
+        return 0
+    parts = str(value).strip().split(":")
+    if len(parts) != 3:
+        raise ValueError(f"Invalid VISUM time value: {value}")
+    hours, minutes, seconds = parts
+    return int(hours) * 3600 + int(minutes) * 60 + int(float(seconds))
+
+
+def _trip_direction(journey: sqlite3.Row) -> int:
+    return 1 if str(journey["DIRECTIONCODE"]) == "<" else 0
