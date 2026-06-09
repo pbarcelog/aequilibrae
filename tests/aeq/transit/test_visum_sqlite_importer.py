@@ -194,6 +194,7 @@ def _add_visum_reference_network(project):
                 (2, 15, 20, 0, 0.5, 't', 'default', 1001, GeomFromText('LINESTRING(0.005 0, 0.01 0)', 4326))
             """
         )
+    project.zoning._Zoning__load()
 
 
 @pytest.fixture
@@ -347,3 +348,38 @@ def test_import_from_visum_sqlite_overwrite_invalidates_saved_transit_graph_conf
     assert report.mapping_coverage["removed_transit_graph_configs"] == {"total": 1, "matched": 1, "missing": 0}
     with empty_project.db_connection as conn:
         assert conn.execute("SELECT COUNT(*) FROM transit_graph_configs").fetchone()[0] == 0
+
+
+def test_import_from_visum_sqlite_can_build_transit_graph(empty_project, visum_transit_sqlite_file):
+    _add_visum_reference_network(empty_project)
+    empty_project.transit.import_from_visum_sqlite(visum_transit_sqlite_file)
+
+    graph = empty_project.transit.create_graph(
+        with_inner_stop_transfers=False,
+        with_outer_stop_transfers=False,
+        with_walking_edges=False,
+        blocking_centroid_flows=False,
+        connector_method="nearest_neighbour",
+    )
+
+    assert not graph.vertices.empty
+    assert not graph.edges.empty
+    assert set(graph.edges.link_type).issuperset({"on-board", "boarding", "alighting"})
+
+
+def test_import_from_visum_sqlite_can_build_pt_preload(empty_project, visum_transit_sqlite_file):
+    _add_visum_reference_network(empty_project)
+    empty_project.transit.import_from_visum_sqlite(visum_transit_sqlite_file)
+
+    preload = empty_project.transit.build_pt_preload(7 * 3600, 9 * 3600)
+
+    assert preload.sort_values("link_id").to_records(index=False).tolist() == [(1, 1, 4), (2, 1, 4)]
+
+
+def test_import_from_visum_sqlite_graph_requires_mapped_route_segments(empty_project, visum_transit_sqlite_file):
+    _add_visum_reference_network(empty_project)
+    with empty_project.db_connection as conn:
+        conn.execute("DELETE FROM links WHERE link_id=2")
+
+    with pytest.raises(ValueError, match="unmapped-line-route-segments"):
+        empty_project.transit.import_from_visum_sqlite(visum_transit_sqlite_file)

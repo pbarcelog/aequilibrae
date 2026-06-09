@@ -34,9 +34,9 @@
 
 ## 5. Graph And Preload Readiness
 
-- [ ] 5.1 Add tests showing a successful VISUM transit import satisfies `Transit.create_graph()` required table checks.
-- [ ] 5.2 Add tests showing imported schedules can be used by `Transit.build_pt_preload()` for a representative time window.
-- [ ] 5.3 Add tests for graph-building failure diagnostics when required route, trip, or mapping data cannot be imported.
+- [x] 5.1 Add tests showing a successful VISUM transit import satisfies `Transit.create_graph()` required table checks.
+- [x] 5.2 Add tests showing imported schedules can be used by `Transit.build_pt_preload()` for a representative time window.
+- [x] 5.3 Add tests for graph-building failure diagnostics when required route, trip, or mapping data cannot be imported.
 
 ## 6. Karlsruhe Smoke Checks
 
