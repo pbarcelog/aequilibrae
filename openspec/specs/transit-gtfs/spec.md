@@ -3,9 +3,7 @@
 ## Purpose
 
 This specification captures the current behavioral contract for GTFS import, transit databases, transit graph creation, and transit assignment support.
-
 ## Requirements
-
 ### Requirement: Transit database is available
 
 The system SHALL ensure that every loaded project has a transit database available for public transport workflows.
@@ -27,18 +25,21 @@ The system SHALL create GTFS route-system builders configured for the active pro
 - **AND** connect builder progress signals to the transit gateway
 
 ### Requirement: Transit tables store imported service data
+The system SHALL store imported transit service data in the transit database using the transit table specification for
+all supported transit import sources.
 
-The system SHALL store imported transit service data in the transit database using the transit table specification.
-
-#### Scenario: Storing route data
-
+#### Scenario: Storing GTFS route data
 - **WHEN** GTFS route data is imported
 - **THEN** the system SHALL store route patterns, agency references, route metadata, capacities, passenger-car equivalents, and route geometry
 
-#### Scenario: Storing trip schedules
-
+#### Scenario: Storing GTFS trip schedules
 - **WHEN** GTFS trip schedules are imported
 - **THEN** the system SHALL store trip IDs, sequence numbers, arrivals, and departures with trip relationships
+
+#### Scenario: Storing supported non-GTFS transit service data
+- **WHEN** a supported non-GTFS transit importer writes service data to the transit database
+- **THEN** the system SHALL populate the transit service tables using the same route, pattern, trip, and schedule contracts required by transit graph creation
+- **AND** preserve importer-specific source provenance through supported fields or diagnostics
 
 ### Requirement: Transit graphs are period-aware
 
