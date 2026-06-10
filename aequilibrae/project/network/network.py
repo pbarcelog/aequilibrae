@@ -258,6 +258,7 @@ class Network(WorkerThread):
         path_or_layers,
         *,
         mode_mapping: dict[str, str] | None = None,
+        transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
         ignored_transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
         link_type_mapping: dict[object, str] | None = None,
         source_crs: str | int | None = None,
@@ -268,17 +269,23 @@ class Network(WorkerThread):
         duplicate_node_offset_meters: float = 0.25,
     ) -> VisumGeoJSONReport:
         """
-        Creates an AequilibraE private-traffic network from VISUM GeoJSON layers.
+        Creates an AequilibraE network from VISUM GeoJSON layers.
 
         :Arguments:
             **path_or_layers** (:obj:`str`, :obj:`Path`, or :obj:`dict`): Folder with conventional VISUM GeoJSON
             layer names, or an explicit mapping from layer names to files.
 
             **mode_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM transport systems to single-character
-            AequilibraE mode IDs. Defaults to ``{"CAR": "c", "HGV": "h"}``.
+            AequilibraE mode IDs. Defaults include private, active, walk-access, bus, tram/light-rail, and rail
+            transport systems. User values override the defaults for matching VISUM transport systems.
+
+            **transport_systems** (:obj:`set`, :obj:`list`, or :obj:`tuple`, *Optional*): VISUM transport systems to
+            import from source ``TSYSSET`` values. When omitted, all supported systems in the effective mapping are
+            imported.
 
             **ignored_transport_systems** (:obj:`set`, :obj:`list`, or :obj:`tuple`, *Optional*): VISUM transport
-            systems to ignore explicitly. Any transport system outside ``mode_mapping`` must be mapped or ignored.
+            systems to ignore explicitly. Any imported transport system outside ``mode_mapping`` must be mapped,
+            filtered through ``transport_systems``, or ignored.
 
             **link_type_mapping** (:obj:`dict`, *Optional*): Mapping from VISUM link class/type values to
             AequilibraE link type names.
@@ -308,6 +315,7 @@ class Network(WorkerThread):
             self,
             path_or_layers,
             mode_mapping=mode_mapping,
+            transport_systems=transport_systems,
             ignored_transport_systems=ignored_transport_systems,
             link_type_mapping=link_type_mapping,
             source_crs=source_crs,

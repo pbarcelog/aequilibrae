@@ -36,7 +36,16 @@ CONVENTIONAL_NAMES = {
     "connector": ("connector.geojson", "connectors.geojson"),
     "countlocation": ("countlocation.geojson", "count_location.geojson", "count-locations.geojson"),
 }
-DEFAULT_MODE_MAPPING = {"CAR": "c", "HGV": "h"}
+DEFAULT_PRIVATE_MODE_MAPPING = {"CAR": "c", "HGV": "h"}
+DEFAULT_MODE_MAPPING = {
+    **DEFAULT_PRIVATE_MODE_MAPPING,
+    "BIKE": "b",
+    "WALK": "w",
+    "PUTW": "w",
+    "BUS": "t",
+    "TRAM": "l",
+    "TRAIN": "r",
+}
 CONNECTOR_FALLBACK_SPEED_KMH = 30.0
 CONNECTOR_FALLBACK_CAPACITY = 99999.0
 GEOD = Geod(ellps="WGS84")
@@ -86,6 +95,9 @@ class VisumGeoJSONReport:
     imported_counts: dict[str, int] = field(default_factory=dict)
     source_references: dict[str, object] = field(default_factory=dict)
     mode_mapping: dict[str, str] = field(default_factory=dict)
+    transport_systems: list[str] = field(default_factory=list)
+    ignored_transport_systems: list[str] = field(default_factory=list)
+    filtered_transport_systems: list[str] = field(default_factory=list)
     link_type_mapping: dict[object, str] = field(default_factory=dict)
     crs: dict[str, str] = field(default_factory=dict)
 
@@ -285,6 +297,7 @@ class VisumGeoJSONImporter:
         path_or_layers: str | Path | Mapping[str, str | Path],
         *,
         mode_mapping: Mapping[str, str] | None = None,
+        transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
         ignored_transport_systems: set[str] | list[str] | tuple[str, ...] | None = None,
         link_type_mapping: Mapping[object, str] | None = None,
         source_crs: str | int | None = None,
@@ -300,7 +313,12 @@ class VisumGeoJSONImporter:
             raise ValueError("duplicate_node_offset_meters must be positive when duplicate_node_policy='offset'")
         self.net = net
         self.path_or_layers = path_or_layers
-        self.mode_mapping = {str(k).upper(): v for k, v in (mode_mapping or DEFAULT_MODE_MAPPING).items()}
+        self.mode_mapping = {str(k).upper(): v for k, v in DEFAULT_MODE_MAPPING.items()}
+        if mode_mapping is not None:
+            self.mode_mapping.update({str(k).upper(): v for k, v in mode_mapping.items()})
+        self.transport_systems = (
+            None if transport_systems is None else {str(token).upper() for token in transport_systems}
+        )
         self.ignored_transport_systems = {str(token).upper() for token in (ignored_transport_systems or set())}
         self.link_type_mapping = dict(link_type_mapping or {})
         self.source_crs = source_crs
@@ -309,7 +327,11 @@ class VisumGeoJSONImporter:
         self.geometry_tolerance = geometry_tolerance
         self.duplicate_node_policy = duplicate_node_policy
         self.duplicate_node_offset_meters = duplicate_node_offset_meters
-        self.report = VisumGeoJSONReport(mode_mapping=dict(self.mode_mapping))
+        self.report = VisumGeoJSONReport(
+            mode_mapping=dict(self.mode_mapping),
+            transport_systems=sorted(self.transport_systems or []),
+            ignored_transport_systems=sorted(self.ignored_transport_systems),
+        )
         self.layers: dict[str, gpd.GeoDataFrame] = {}
         self.node_ids: dict[object, int] = {}
         self.node_points: dict[object, Point] = {}
@@ -320,6 +342,7 @@ class VisumGeoJSONImporter:
         self.connector_source_keys: dict[object, str] = {}
         self.connector_source_nos: dict[object, int | None] = {}
         self.skipped_records: dict[str, set[object]] = {"link": set(), "connector": set()}
+        self.used_source_modes: set[str] = set()
 
     def doWork(self) -> VisumGeoJSONReport:
         self._discover_and_read()
@@ -477,6 +500,7 @@ class VisumGeoJSONImporter:
     def _validate_mode_values(self) -> None:
         unmapped = {}
         ignored = {}
+        filtered = {}
         for layer in ("link", "connector"):
             if layer not in self.layers:
                 continue
@@ -485,13 +509,20 @@ class VisumGeoJSONImporter:
                 ab_tokens = _split_tsysset(row.get("TSYSSET"))
                 ba_tokens = _split_tsysset(row.get("R_TSYSSET"))
                 tokens = ab_tokens + ba_tokens
-                mapped_tokens = [token for token in tokens if token.upper() in self.mode_mapping]
-                ignored_tokens = [token for token in tokens if token.upper() in self.ignored_transport_systems]
-                unmapped_tokens = [
-                    token
-                    for token in tokens
-                    if token.upper() not in self.mode_mapping and token.upper() not in self.ignored_transport_systems
-                ]
+                mapped_tokens = []
+                ignored_tokens = []
+                filtered_tokens = []
+                unmapped_tokens = []
+                for token in tokens:
+                    token_upper = token.upper()
+                    if token_upper in self.ignored_transport_systems:
+                        ignored_tokens.append(token)
+                    elif self.transport_systems is not None and token_upper not in self.transport_systems:
+                        filtered_tokens.append(token)
+                    elif token_upper in self.mode_mapping:
+                        mapped_tokens.append(token)
+                    else:
+                        unmapped_tokens.append(token)
 
                 if not tokens:
                     self.skipped_records[layer].add(row_index)
@@ -509,21 +540,34 @@ class VisumGeoJSONImporter:
                     self._add_transport_system_summary(unmapped, layer, token, source_id)
                 for token in set(ignored_tokens):
                     self._add_transport_system_summary(ignored, layer, token, source_id)
+                for token in set(filtered_tokens):
+                    self._add_transport_system_summary(filtered, layer, token, source_id)
 
                 if mapped_tokens:
+                    self.used_source_modes.update(token.upper() for token in mapped_tokens)
                     continue
                 if unmapped_tokens:
                     continue
 
                 self.skipped_records[layer].add(row_index)
-                self.report.add(
-                    "warning",
-                    "ignored-record",
-                    "Record has only explicitly ignored transport systems and will not be imported",
-                    layer=layer,
-                    field="TSYSSET",
-                    source_id=source_id,
-                )
+                if filtered_tokens:
+                    self.report.add(
+                        "warning",
+                        "filtered-record",
+                        "Record has only filtered or ignored transport systems and will not be imported",
+                        layer=layer,
+                        field="TSYSSET",
+                        source_id=source_id,
+                    )
+                else:
+                    self.report.add(
+                        "warning",
+                        "ignored-record",
+                        "Record has only explicitly ignored transport systems and will not be imported",
+                        layer=layer,
+                        field="TSYSSET",
+                        source_id=source_id,
+                    )
 
         for (layer, token), summary in sorted(unmapped.items()):
             source_text = ", ".join(str(source_id) for source_id in summary["sources"])
@@ -546,6 +590,20 @@ class VisumGeoJSONImporter:
                 layer=layer,
                 field="TSYSSET",
             )
+        filtered_tokens = []
+        for (layer, token), summary in sorted(filtered.items()):
+            filtered_tokens.append(token)
+            self.report.add(
+                "info",
+                "filtered-transport-system",
+                (
+                    f"Transport system '{token}' is outside the requested transport systems in "
+                    f"{summary['count']} {layer} records"
+                ),
+                layer=layer,
+                field="TSYSSET",
+            )
+        self.report.filtered_transport_systems = sorted(set(filtered_tokens))
 
     def _add_transport_system_summary(self, summary: dict, layer: str, token: str, source_id) -> None:
         key = (layer, token.upper())
@@ -673,7 +731,8 @@ class VisumGeoJSONImporter:
                 editor.add(field_name, description=description, data_type=data_type)
 
     def _ensure_modes(self) -> None:
-        for source_mode, mode_id in sorted(self.mode_mapping.items()):
+        for source_mode in sorted(self.used_source_modes):
+            mode_id = self.mode_mapping[source_mode]
             if len(mode_id) != 1:
                 self.report.add(
                     "error",
@@ -1183,7 +1242,12 @@ class VisumGeoJSONImporter:
     def _mapped_modes(self, value, layer: str, source_id) -> set[str]:
         modes = set()
         for token in _split_tsysset(value):
-            mapped = self.mode_mapping.get(token.upper())
+            token_upper = token.upper()
+            if token_upper in self.ignored_transport_systems:
+                continue
+            if self.transport_systems is not None and token_upper not in self.transport_systems:
+                continue
+            mapped = self.mode_mapping.get(token_upper)
             if mapped is not None:
                 modes.add(mapped)
         return modes

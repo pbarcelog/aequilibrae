@@ -64,7 +64,9 @@ transit = data.new_gtfs_builder(agency="Lisanco", file_path=dest_path)
 transit.load_date("2016-04-13")
 
 # Now we execute the map matching to find the real paths.
-# Depending on the GTFS size, this process can be really time-consuming.
+# Depending on the GTFS size, this process can be really time-consuming. Map matching uses GTFS route types to choose
+# project network modes, so bus, tram/light-rail, and rail service need corresponding links in the model. Regional GTFS
+# feeds can cover a wider area than the model network; clipping or filtering such feeds is a separate preparation step.
 
 # transit.set_allow_map_match(True)
 # transit.map_match()

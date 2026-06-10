@@ -1,4 +1,7 @@
 import pytest
+import geopandas as gpd
+from shapely.geometry import LineString, Point
+from types import SimpleNamespace
 
 from aequilibrae.project.database_connection import database_connection
 from aequilibrae.transit.lib_gtfs import GTFSRouteSystemBuilder
@@ -50,10 +53,68 @@ def test_map_match(route_system_builder, caplog):
     route_system_builder.map_match([3, 1, 2])
     route_system_builder.save_to_disk()
 
-    assert "Skipping the following route_types as they have no corresponding road mode: [1, 2]" in caplog.text
+    assert "Skipping the following route_types as they have no corresponding road mode: [1]" in caplog.text
 
     with database_connection("transit") as transit_conn:
         assert transit_conn.execute("SELECT * FROM pattern_mapping;").fetchone()[0] > 1
+
+
+def test_builds_map_matchers_uses_gtfs_route_type_modal_subgraphs(monkeypatch):
+    class FakeRouteMapMatcher:
+        def __init__(self, link_gdf, nodes_gdf, stops_gdf):
+            self.link_modes = set(link_gdf.modes)
+            self.stop_ids = set(stops_gdf.stop_id)
+            self.node_ids = set(nodes_gdf.node_id)
+            self.initialized = False
+
+        def initialize_graph(self):
+            self.initialized = True
+
+    monkeypatch.setattr("aequilibrae.transit.lib_gtfs.RouteMapMatcher", FakeRouteMapMatcher)
+
+    builder = object.__new__(GTFSRouteSystemBuilder)
+    links = gpd.GeoDataFrame(
+        [
+            {"link_id": 1, "a_node": 1, "b_node": 2, "modes": "l", "geometry": LineString([(0.0, 0.0), (0.01, 0.0)])},
+            {"link_id": 2, "a_node": 3, "b_node": 4, "modes": "r", "geometry": LineString([(0.0, 0.01), (0.01, 0.01)])},
+            {"link_id": 3, "a_node": 5, "b_node": 6, "modes": "t", "geometry": LineString([(0.0, 0.02), (0.01, 0.02)])},
+        ],
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
+    nodes = gpd.GeoDataFrame(
+        [
+            {"node_id": 1, "geometry": Point(0.0, 0.0)},
+            {"node_id": 2, "geometry": Point(0.01, 0.0)},
+            {"node_id": 3, "geometry": Point(0.0, 0.01)},
+            {"node_id": 4, "geometry": Point(0.01, 0.01)},
+            {"node_id": 5, "geometry": Point(0.0, 0.02)},
+            {"node_id": 6, "geometry": Point(0.01, 0.02)},
+        ],
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
+    builder.project = SimpleNamespace(
+        network=SimpleNamespace(links=SimpleNamespace(data=links), nodes=SimpleNamespace(data=nodes))
+    )
+    builder.select_stops = {
+        "tram": SimpleNamespace(stop_id="tram", route_type=0, geo=Point(0.005, 0.0)),
+        "rail": SimpleNamespace(stop_id="rail", route_type=2, geo=Point(0.005, 0.01)),
+        "bus": SimpleNamespace(stop_id="bus", route_type=3, geo=Point(0.005, 0.02)),
+    }
+    builder.map_matchers = {}
+    builder.srid = 4326
+
+    builder.builds_map_matchers()
+
+    assert set(builder.map_matchers) == {"l", "r", "t"}
+    assert builder.map_matchers["l"].link_modes == {"l"}
+    assert builder.map_matchers["l"].stop_ids == {"tram"}
+    assert builder.map_matchers["r"].link_modes == {"r"}
+    assert builder.map_matchers["r"].stop_ids == {"rail"}
+    assert builder.map_matchers["t"].link_modes == {"t"}
+    assert builder.map_matchers["t"].stop_ids == {"bus"}
+    assert all(matcher.initialized for matcher in builder.map_matchers.values())
 
 
 def test_set_agency_identifier(route_system_builder):

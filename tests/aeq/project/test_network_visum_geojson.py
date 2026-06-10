@@ -542,15 +542,16 @@ def test_mode_override_merges_hgv_into_car(empty_project, visum_geojson_folder):
 
     assert modes == "c"
     assert h_count == 0
-    assert report.mode_mapping == {"CAR": "c", "HGV": "c"}
+    assert report.mode_mapping["CAR"] == "c"
+    assert report.mode_mapping["HGV"] == "c"
 
 
 def test_extra_transport_system_requires_mapping_or_ignore(empty_project, visum_geojson_folder):
     link = gpd.read_file(visum_geojson_folder / "link.geojson")
-    link.loc[0, "TSYSSET"] = "CAR,HGV,BUS"
+    link.loc[0, "TSYSSET"] = "CAR,HGV,FERRY"
     link.to_file(visum_geojson_folder / "link.geojson", driver="GeoJSON")
 
-    with pytest.raises(ValueError, match="BUS"):
+    with pytest.raises(ValueError, match="FERRY"):
         empty_project.network.create_from_visum_geojson(visum_geojson_folder)
 
     with empty_project.db_connection as conn:
@@ -569,6 +570,60 @@ def test_ignored_transport_system_is_reported_and_not_imported(empty_project, vi
     assert any(diag.code == "ignored-transport-system" and "BUS" in diag.message for diag in report.diagnostics)
     with empty_project.db_connection as conn:
         assert conn.execute("select modes from links where visum_link_no=100").fetchone()[0] == "ch"
+
+
+def test_default_mapping_imports_supported_public_transport_modes(empty_project, visum_geojson_folder):
+    links = gpd.read_file(visum_geojson_folder / "link.geojson")
+    link = links.iloc[0].copy()
+    link["TSYSSET"] = "CAR,HGV,BUS,TRAM,TRAIN"
+    link["R_TSYSSET"] = "BUS,TRAM,TRAIN"
+    links = gpd.GeoDataFrame([link], geometry="geometry", crs=links.crs)
+    links.to_file(visum_geojson_folder / "link.geojson", driver="GeoJSON")
+
+    report = empty_project.network.create_from_visum_geojson(visum_geojson_folder)
+
+    assert report.mode_mapping["BUS"] == "t"
+    assert report.mode_mapping["TRAM"] == "l"
+    assert report.mode_mapping["TRAIN"] == "r"
+    with empty_project.db_connection as conn:
+        rows = conn.execute(
+            "select direction, modes from links where visum_link_no=100 order by direction"
+        ).fetchall()
+        mode_ids = {row[1] for row in rows}
+        assert mode_ids == {"lrt", "chlrt"}
+        assert conn.execute("select count(*) from modes where mode_id in ('l', 'r', 't')").fetchone()[0] == 3
+
+
+def test_transport_system_filter_imports_requested_modes_only(empty_project, visum_geojson_folder):
+    link = gpd.read_file(visum_geojson_folder / "link.geojson")
+    link.loc[0, "TSYSSET"] = "CAR,HGV,BUS"
+    link.loc[0, "R_TSYSSET"] = "BUS"
+    link.to_file(visum_geojson_folder / "link.geojson", driver="GeoJSON")
+
+    report = empty_project.network.create_from_visum_geojson(
+        visum_geojson_folder, transport_systems={"CAR", "HGV"}
+    )
+
+    assert report.transport_systems == ["CAR", "HGV"]
+    assert "BUS" in report.filtered_transport_systems
+    assert any(diag.code == "filtered-transport-system" and "BUS" in diag.message for diag in report.diagnostics)
+    with empty_project.db_connection as conn:
+        assert conn.execute("select modes from links where visum_link_no=100").fetchone()[0] == "ch"
+        assert conn.execute("select direction from links where visum_link_no=100").fetchone()[0] == 1
+
+
+def test_unknown_transport_system_outside_filter_does_not_block_import(empty_project, visum_geojson_folder):
+    link = gpd.read_file(visum_geojson_folder / "link.geojson")
+    link.loc[0, "TSYSSET"] = "CAR,FERRY"
+    link.loc[0, "R_TSYSSET"] = "FERRY"
+    link.to_file(visum_geojson_folder / "link.geojson", driver="GeoJSON")
+
+    report = empty_project.network.create_from_visum_geojson(visum_geojson_folder, transport_systems={"CAR"})
+
+    assert "FERRY" in report.filtered_transport_systems
+    with empty_project.db_connection as conn:
+        assert conn.execute("select modes from links where visum_link_no=100").fetchone()[0] == "c"
+        assert conn.execute("select direction from links where visum_link_no=100").fetchone()[0] == 1
 
 
 def test_records_with_only_ignored_transport_systems_are_skipped(empty_project, visum_geojson_folder):
@@ -615,7 +670,9 @@ def test_user_can_map_bus_as_assignable_mode(empty_project, visum_geojson_folder
         visum_geojson_folder, mode_mapping={"CAR": "c", "HGV": "h", "BUS": "t"}
     )
 
-    assert report.mode_mapping == {"CAR": "c", "HGV": "h", "BUS": "t"}
+    assert report.mode_mapping["CAR"] == "c"
+    assert report.mode_mapping["HGV"] == "h"
+    assert report.mode_mapping["BUS"] == "t"
     with empty_project.db_connection as conn:
         assert conn.execute("select modes from links where visum_link_no=100").fetchone()[0] == "cht"
         assert conn.execute("select count(*) from modes where mode_id='t'").fetchone()[0] == 1
@@ -641,7 +698,8 @@ def test_mode_excluded_missing_fields_do_not_poison_car_graph(empty_project, vis
         conn.execute("ALTER TABLE links ADD COLUMN custom_zero NUMERIC")
         conn.execute("UPDATE links SET custom_zero=0")
     empty_project.network.build_graphs(
-        fields=["distance", "travel_time_ab", "travel_time_ba", "capacity_ab", "capacity_ba", "custom_zero"], modes=["c"]
+        fields=["distance", "travel_time_ab", "travel_time_ba", "capacity_ab", "capacity_ba", "custom_zero"],
+        modes=["c"],
     )
 
     graph = empty_project.network.graphs["c"].graph

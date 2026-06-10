@@ -5,7 +5,7 @@ Importing a network from VISUM GeoJSON
 ======================================
 
 This example creates a tiny VISUM-like GeoJSON export locally and imports it as an
-AequilibraE private-traffic network.
+AequilibraE network.
 """
 
 from tempfile import TemporaryDirectory
@@ -126,7 +126,7 @@ with TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         ],
     )
 
-    report = project.network.create_from_visum_geojson(visum_dir)
+    report = project.network.create_from_visum_geojson(visum_dir, transport_systems={"CAR", "HGV"})
     project.network.build_graphs(
         fields=["distance", "travel_time_ab", "travel_time_ba", "capacity_ab", "capacity_ba"], modes=["c"]
     )

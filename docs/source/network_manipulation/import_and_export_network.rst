@@ -107,7 +107,7 @@ specification.
 Importing from VISUM GeoJSON
 ----------------------------
 
-VISUM GeoJSON private-traffic exports can be imported with
+VISUM GeoJSON network exports can be imported with
 ``Project.network.create_from_visum_geojson()``. The importer reads GeoJSON
 layers through GeoPandas, validates VISUM source topology from identifiers such
 as ``FROMNODENO``, ``TONODENO``, ``ZONENO``, and ``NODENO``, and creates
@@ -118,14 +118,23 @@ Folder-based import recognizes conventional files named ``node.geojson``,
 ``zone_polygon.geojson``, and optional ``countlocation.geojson``. Custom file
 names can be supplied with an explicit layer-to-path mapping.
 
-By default, VISUM ``CAR`` maps to AequilibraE mode ``c`` and ``HGV`` maps to
-mode ``h``. Users can override this mapping, for example to merge ``HGV`` into
-``c``. Any additional VISUM transport system must be explicitly mapped or
-explicitly ignored with ``ignored_transport_systems`` before the importer writes
-to the project database. This allows users to decide whether systems such as
-``BUS`` should become assignable road-vehicle modes or remain outside the import
-scope. Link classes use deterministic link-type creation, and users can provide
-their own link-type mapping when model classes need specific AequilibraE names.
+By default, supported VISUM transport systems are imported when they appear in
+``TSYSSET`` or ``R_TSYSSET``. The default mapping includes private traffic
+(``CAR`` to ``c`` and ``HGV`` to ``h``), active and access systems (``BIKE`` to
+``b``, ``WALK`` and ``PUTW`` to ``w``), and public transport systems aligned
+with GTFS route types (``BUS`` to ``t``, ``TRAM`` to ``l``, and ``TRAIN`` to
+``r``). Users can override this mapping, for example to merge ``HGV`` into
+``c`` or to use project-specific transit mode IDs.
+
+Use ``transport_systems`` when only a subset of source systems should be
+imported. For example, ``transport_systems={"CAR", "HGV"}`` keeps a
+private-traffic import even when the GeoJSON source also contains public
+transport links. Any imported VISUM transport system outside the effective
+``mode_mapping`` must be explicitly mapped, filtered out through
+``transport_systems``, or explicitly ignored with ``ignored_transport_systems``
+before the importer writes affected records to the project database. Link
+classes use deterministic link-type creation, and users can provide their own
+link-type mapping when model classes need specific AequilibraE names.
 
 VISUM length, speed, time, and capacity-like fields are parsed into assignment
 fields where possible. AequilibraE trigger-derived ``distance`` remains based on
@@ -157,9 +166,12 @@ centroid coordinate offset, and adjusts connector starts consistently.
 
 Count locations are imported only as supported link-count associations in the
 returned report. They are not used to adjust OD matrices, calibrate demand, or
-run ODME. Public transport layers, OD matrix files, turn counts, detector/lane
-counts, screenlines, speeds, routes, and travel-time observations are recognized
-as deferred workflows for later import pipelines.
+run ODME. VISUM public transport stop, line, route, and timetable layers, OD
+matrix files, turn counts, detector/lane counts, screenlines, speeds, routes,
+and travel-time observations are recognized as deferred workflows for later
+import pipelines. GTFS can be imported separately into the public transport
+database and, when map matching is enabled, uses GTFS route types to select the
+corresponding project network modes.
 
 Interactive UI wiring for VISUM import belongs in the adjacent frontend or
 plugin repository. This Python package exposes the import API and documentation.

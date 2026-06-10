@@ -10,7 +10,7 @@ from shapely.geometry import LineString, MultiPolygon, Point, Polygon
 
 from aequilibrae.project.network.visum_geojson_importer import (
     CONNECTOR_FALLBACK_CAPACITY,
-    DEFAULT_MODE_MAPPING,
+    DEFAULT_PRIVATE_MODE_MAPPING,
     VisumGeoJSONImporter,
     VisumGeoJSONReport,
     _direction,
@@ -107,7 +107,7 @@ def visum_sqlite_source_connectivity(
 ) -> dict[str, set[tuple[int, int]]]:
     """Extract source directed link/connector connectivity by mapped AequilibraE mode."""
 
-    mapping = {str(k).upper(): v for k, v in (mode_mapping or DEFAULT_MODE_MAPPING).items()}
+    mapping = {str(k).upper(): v for k, v in (mode_mapping or DEFAULT_PRIVATE_MODE_MAPPING).items()}
     ignored = {str(token).upper() for token in (ignored_transport_systems or set())}
     connectivity = {mode: set() for mode in sorted(set(mapping.values()))}
 
@@ -169,6 +169,10 @@ class VisumSQLiteImporter(VisumGeoJSONImporter):
         self.default_crs = default_crs
         self.connector_epsilon_minutes = connector_epsilon_minutes
         self.connector_capacity = connector_capacity
+        if mode_mapping is None:
+            self.mode_mapping = {str(k).upper(): v for k, v in DEFAULT_PRIVATE_MODE_MAPPING.items()}
+        else:
+            self.mode_mapping = {str(k).upper(): v for k, v in mode_mapping.items()}
         self.report = VisumSQLiteReport(mode_mapping=dict(self.mode_mapping))
 
     def doWork(self) -> VisumSQLiteReport:
