@@ -47,9 +47,9 @@ contain many different variants, so coverage must be evaluated at the route-patt
    - `ambiguous`: multiple candidate links are close enough and cannot be resolved deterministically
    - `unmatched`: no usable candidate under the configured matching rules
 
-   Distances should be recorded in threshold bands rather than hidden behind one hard cutoff. A strict modal threshold
-   such as 10 m can be the first acceptance band, while wider bands such as 25 m, 50 m, and 100 m help diagnose bus stop
-   offsets and model simplification.
+   Distances should be recorded in threshold bands rather than hidden behind one hard cutoff. The initial diagnostic
+   defaults use a configurable 25 m modal-link match threshold, a configurable 100 m any-link model-range threshold,
+   and 10 m, 25 m, 50 m, and 100 m diagnostic bands to help diagnose bus stop offsets and model simplification.
 
 3. **Trim only prefix/suffix gaps.**
 
@@ -64,8 +64,8 @@ contain many different variants, so coverage must be evaluated at the route-patt
 
 5. **Keep filtering separate from full GTFS import initially.**
 
-   The first implementation should produce diagnostics and a reusable filtered-pattern decision set. Wiring this
-   directly into persistent GTFS import can be a later step once the diagnostics have been reviewed against Karlsruhe and
+   The first implementation should produce diagnostics and a reusable filtered-pattern decision set in memory. Wiring
+   this directly into persistent GTFS import is deferred until after diagnostics have been reviewed against Karlsruhe and
    synthetic fixtures.
 
 ## Risks / Trade-offs
@@ -83,8 +83,7 @@ contain many different variants, so coverage must be evaluated at the route-patt
 
 ## Open Questions
 
-- What should the initial default modal stop-match threshold be for bus: 10 m, 25 m, or a configurable route-type value?
-- Should the accepted/trimmed decision set be stored in memory only for this first batch, or written as a diagnostic
-  artifact under the project folder?
-- Should the next implementation wire accepted patterns into `GTFSRouteSystemBuilder.save_to_disk()` immediately, or
-  stop after producing diagnostics for manual review?
+- Should route-type-specific default thresholds be introduced after Karlsruhe diagnostics, or is one configurable
+  modal-link threshold sufficient for the first persistent workflow?
+- Should reviewed coverage diagnostics be written as an optional artifact under the project folder after the Karlsruhe
+  checkpoint, or remain an in-memory/reporting workflow?

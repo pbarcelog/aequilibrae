@@ -15,6 +15,16 @@ The GTFS protocol is being constantly updated and so are AequilibraE's capabilit
 these changes. We strongly encourage you to take a look at the documentation provided
 by `Mobility Data <https://gtfs.org/documentation/schedule/reference/>`_.
 
+Regional GTFS feeds can cover a much larger service area than the project network. Before using
+network-based map matching, coverage diagnostics can evaluate route patterns built from ordered
+``stop_times.txt`` stop sequences against the project network. The diagnostics classify stops as
+matched to the route-type modal graph, near the model but not near the required modal links,
+outside the model range, ambiguous, unmatched, or unsupported by the route-type mapping.
+Patterns are accepted only when all retained stops are matched and connected through the modal
+network. Missing coverage may be trimmed only at the beginning or end of a pattern; internal
+coverage gaps and internal modal discontinuities are rejected rather than simplified into a
+substitute route.
+
 VISUM SQLite public-transport import is intended for projects whose private network has already
 been imported from the same VISUM SQLite source with preserved VISUM node, link, and zone
 identifiers. It reads supported operators, stop points, line routes, time profiles, vehicle
