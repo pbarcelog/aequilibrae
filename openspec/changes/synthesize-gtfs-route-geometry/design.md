@@ -47,20 +47,27 @@ produce qualitative assignment results and expose diagnostics for later editing,
 3. **Use stop-to-stop shortest paths when shapes are absent.**
 
    For each accepted GTFS route pattern, consecutive matched stops should be connected through shortest paths on the
-   project network. Distance is the initial cost because it is stable and available on links, and because this workflow
-   targets qualitative first results rather than calibrated travel times.
+   project network. Stop matching is link-first and symmetric: both the upstream stop and downstream stop are matched to
+   nearby compatible candidate links, those links yield candidate graph access nodes, and the segment solver evaluates
+   paths between the upstream candidate set and downstream candidate set. Distance is the initial cost because it is
+   stable and available on links, and because this workflow targets qualitative first results rather than calibrated
+   travel times.
 
-4. **Score alternative paths by street priority and detour.**
+4. **Score alternative paths by street priority and detour only when stop context supports it.**
 
    The inferencer should compare at least two path candidates when the network exposes useful priority information:
 
    - a preferred-path candidate using route-type modal links and main-street or higher-priority links;
    - a fallback candidate allowing lower-priority compatible links.
 
-   If the preferred path exists and its distance is not more than the configured detour ratio over the fallback path,
-   the preferred path should be used. The initial detour-ratio default should be 2.0, meaning the preferred path can be
-   up to 100% longer than the fallback before the inferencer chooses the fallback. If the preferred path is unavailable,
-   the fallback may be used and flagged.
+   The preferred-path candidate should be considered only when stop-link context supports it, especially when both stops
+   are matched to main-street or higher-priority links. If one or both stops are clearly on secondary or local links, the
+   ordinary shortest-distance fallback is usually the defensible choice, particularly for local bus service. If the
+   preferred path exists and its distance is not more than the configured detour ratio over the fallback path, the
+   preferred path should be used. The initial detour-ratio default should be 2.0, meaning the preferred path can be up to
+   100% longer than the fallback before the inferencer chooses the fallback. If the preferred path is unavailable,
+   context does not support priority preference, or the preferred path is excessively circuitous, the fallback may be
+   used and flagged.
 
 5. **Keep priority classification configurable and data-driven.**
 
@@ -85,8 +92,8 @@ produce qualitative assignment results and expose diagnostics for later editing,
 
 - **Inferred routes may differ from real-world service paths.** -> Store quality diagnostics and make inferred/fallback
   segments visible for review.
-- **Main-street preference can overfit private-network hierarchy.** -> Keep the priority rule configurable and compare
-  against unrestricted fallback paths.
+- **Main-street preference can overfit private-network hierarchy.** -> Keep the priority rule configurable, activate it
+  only when stop context supports it, and compare against unrestricted fallback paths.
 - **Fallback routing through secondary streets can make PT service look more precise than it is.** -> Flag fallback
   segments and expose summary counts.
 - **GTFS shapes may not align cleanly with the model network.** -> Validate topology and fall back to stop-to-stop

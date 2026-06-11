@@ -1,9 +1,9 @@
 ## 1. Geometry Source Inventory
 
-- [ ] 1.1 Inventory current GTFS loader support for `shapes.txt`, trip shape IDs, route shapes, stop patterns, and map-matching inputs.
-- [ ] 1.2 Identify or extend reusable route-pattern diagnostics from `filter-gtfs-to-network-coverage` for synthesis input.
-- [ ] 1.3 Define data structures for synthesized pattern geometry, segment paths, pattern mapping rows, and per-segment quality diagnostics.
-- [ ] 1.4 Add synthetic GTFS fixtures for both shape-bearing and no-shape feeds.
+- [x] 1.1 Inventory current GTFS loader support for `shapes.txt`, trip shape IDs, route shapes, stop patterns, and map-matching inputs.
+- [x] 1.2 Identify or extend reusable route-pattern diagnostics from `filter-gtfs-to-network-coverage` for synthesis input.
+- [x] 1.3 Define data structures for synthesized pattern geometry, segment paths, pattern mapping rows, and per-segment quality diagnostics.
+- [x] 1.4 Add synthetic GTFS fixtures for both shape-bearing and no-shape feeds.
 
 ## 2. Shape-Guided Happy Path
 

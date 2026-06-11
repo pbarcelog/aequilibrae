@@ -195,4 +195,6 @@ The wheel workflow currently builds wheels on Ubuntu, Windows, and Ubuntu ARM. T
 - Search first with `rg` or `rg --files`.
 - Prefer structured parsers and existing APIs over ad hoc text manipulation.
 - Ask a concise question only when the next step is blocked by an important ambiguity.
+- When a task or discussion has a natural continuation, finish with a recommended flow or next breakpoint rather than
+  only a single isolated question.
 - Report commands run and verification results in the final response.
