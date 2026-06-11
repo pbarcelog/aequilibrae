@@ -32,7 +32,7 @@
 ## 5. Persistence And Review Checkpoint
 
 - [ ] 5.1 Wire accepted synthesized patterns into GTFS import persistence for `routes`, `route_links`, `pattern_mapping`, trips, and schedules.
-- [ ] 5.2 Keep diagnostic-only analysis available separately from inference/import mode.
+- [x] 5.2 Keep diagnostic-only analysis available separately from inference/import mode.
 - [x] 5.3 Produce quality summaries by pattern, route, route type, geometry source, fallback reason, and rejection reason.
 - [x] 5.4 Add graph, stop-match, and repeated stop-pair caching for practical review-scale no-shapes synthesis.
 - [x] 5.5 Run a Karlsruhe no-shapes synthesis review checkpoint and compare inferred output with prior coverage diagnostics.

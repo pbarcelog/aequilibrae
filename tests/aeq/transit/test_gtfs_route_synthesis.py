@@ -20,6 +20,8 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     FALLBACK_PREFERRED_EXCESSIVE_DETOUR,
     FALLBACK_PREFERRED_UNAVAILABLE,
     FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED,
+    GEOMETRY_MODE_DIAGNOSTIC_ONLY,
+    GEOMETRY_MODE_INFER_NETWORK,
     GEOMETRY_SOURCE_INFERRED_PREFERRED,
     GEOMETRY_SOURCE_INFERRED_FALLBACK,
     GEOMETRY_SOURCE_REJECTED,
@@ -38,6 +40,7 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     infer_stop_to_stop_segment,
     inventory_gtfs_geometry_sources,
     match_stop_to_network,
+    plan_gtfs_route_geometry,
     route_pattern_synthesis_inputs,
     summarize_synthesized_patterns,
     synthesize_inferred_pattern_geometry,
@@ -105,6 +108,38 @@ def test_route_pattern_synthesis_inputs_excludes_insufficient_retained_stops():
     inputs = route_pattern_synthesis_inputs(analysis)
 
     assert inputs == ()
+
+
+def test_plan_gtfs_route_geometry_keeps_diagnostic_only_separate_from_inference():
+    accepted_pattern = _pattern("R1", ("A", "B"))
+    rejected_pattern = _pattern("R2", ("C", "D"))
+    analysis = GTFSCoverageAnalysis(
+        patterns=(accepted_pattern, rejected_pattern),
+        stop_coverage={
+            accepted_pattern.key: _coverage_rows(accepted_pattern),
+            rejected_pattern.key: _coverage_rows(rejected_pattern),
+        },
+        pattern_decisions={
+            accepted_pattern.key: _decision(accepted_pattern, FULLY_COVERED),
+            rejected_pattern.key: _decision(rejected_pattern, INTERNAL_GAP),
+        },
+    )
+
+    diagnostic_plan = plan_gtfs_route_geometry(analysis)
+    inference_plan = plan_gtfs_route_geometry(analysis, mode=GEOMETRY_MODE_INFER_NETWORK)
+
+    assert diagnostic_plan.mode == GEOMETRY_MODE_DIAGNOSTIC_ONLY
+    assert diagnostic_plan.diagnostic_only
+    assert not diagnostic_plan.should_synthesize
+    assert len(diagnostic_plan.eligible_synthesis_inputs) == 1
+    assert diagnostic_plan.synthesis_inputs == ()
+
+    assert not inference_plan.diagnostic_only
+    assert inference_plan.should_synthesize
+    assert inference_plan.synthesis_inputs == diagnostic_plan.eligible_synthesis_inputs
+
+    with pytest.raises(ValueError, match="GTFS route geometry mode"):
+        plan_gtfs_route_geometry(analysis, mode="import-now")
 
 
 def test_synthesis_result_data_structures_capture_segment_and_mapping_quality():

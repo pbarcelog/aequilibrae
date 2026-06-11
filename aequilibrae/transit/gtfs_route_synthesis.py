@@ -45,6 +45,9 @@ FALLBACK_PREFERRED_UNAVAILABLE = "preferred-path-unavailable"
 FALLBACK_PREFERRED_EXCESSIVE_DETOUR = "preferred-path-exceeds-detour-ratio"
 FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED = "priority-context-unsupported"
 
+GEOMETRY_MODE_DIAGNOSTIC_ONLY = "diagnostic-only"
+GEOMETRY_MODE_INFER_NETWORK = "infer-network-paths"
+
 
 @dataclass(frozen=True)
 class GTFSRouteSynthesisConfig:
@@ -254,6 +257,24 @@ class RoutePatternSynthesisInput:
     @property
     def retained_internal_stop_ids(self) -> tuple[int, ...]:
         return self.coverage_decision.retained_internal_stop_ids
+
+
+@dataclass(frozen=True)
+class GTFSRouteGeometryPlan:
+    """Mode-aware plan for GTFS route geometry review or synthesis."""
+
+    mode: str
+    coverage_analysis: GTFSCoverageAnalysis
+    eligible_synthesis_inputs: tuple[RoutePatternSynthesisInput, ...]
+    synthesis_inputs: tuple[RoutePatternSynthesisInput, ...]
+
+    @property
+    def diagnostic_only(self) -> bool:
+        return self.mode == GEOMETRY_MODE_DIAGNOSTIC_ONLY
+
+    @property
+    def should_synthesize(self) -> bool:
+        return bool(self.synthesis_inputs)
 
 
 @dataclass(frozen=True)
@@ -689,6 +710,29 @@ def route_pattern_synthesis_inputs(
             )
         )
     return tuple(inputs)
+
+
+def plan_gtfs_route_geometry(
+    coverage_analysis: GTFSCoverageAnalysis,
+    mode: str = GEOMETRY_MODE_DIAGNOSTIC_ONLY,
+    accepted_decisions: tuple[str, ...] = (FULLY_COVERED, TRIM_COVERED),
+) -> GTFSRouteGeometryPlan:
+    """Choose whether coverage-accepted GTFS patterns should remain diagnostic-only or enter synthesis."""
+
+    if mode not in {GEOMETRY_MODE_DIAGNOSTIC_ONLY, GEOMETRY_MODE_INFER_NETWORK}:
+        raise ValueError(
+            "GTFS route geometry mode must be one of "
+            f"{GEOMETRY_MODE_DIAGNOSTIC_ONLY!r} or {GEOMETRY_MODE_INFER_NETWORK!r}"
+        )
+
+    eligible = route_pattern_synthesis_inputs(coverage_analysis, accepted_decisions)
+    synthesis_inputs = () if mode == GEOMETRY_MODE_DIAGNOSTIC_ONLY else eligible
+    return GTFSRouteGeometryPlan(
+        mode=mode,
+        coverage_analysis=coverage_analysis,
+        eligible_synthesis_inputs=eligible,
+        synthesis_inputs=synthesis_inputs,
+    )
 
 
 _PATTERN_SUMMARY_COLUMNS = [
@@ -1274,7 +1318,10 @@ __all__ = [
     "GEOMETRY_SOURCE_INFERRED_PREFERRED",
     "GEOMETRY_SOURCE_REJECTED",
     "GEOMETRY_SOURCE_SHAPE",
+    "GEOMETRY_MODE_DIAGNOSTIC_ONLY",
+    "GEOMETRY_MODE_INFER_NETWORK",
     "GTFSGeometrySourceInventory",
+    "GTFSRouteGeometryPlan",
     "GTFSRouteSynthesisCache",
     "GTFSRouteSynthesisCacheStats",
     "GTFSRouteSynthesisConfig",
@@ -1303,6 +1350,7 @@ __all__ = [
     "infer_stop_to_stop_segment",
     "inventory_gtfs_geometry_sources",
     "match_stop_to_network",
+    "plan_gtfs_route_geometry",
     "route_pattern_synthesis_inputs",
     "summarize_synthesized_patterns",
     "synthesize_inferred_pattern_geometry",

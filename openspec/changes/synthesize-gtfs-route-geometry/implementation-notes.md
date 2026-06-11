@@ -94,6 +94,14 @@
 - Grouped summaries are produced by route, route type, geometry source, fallback reason, and rejection reason. These
   summaries are intended for diagnostic review and export; they do not introduce persistent diagnostic tables.
 
+## Diagnostic-Only Geometry Planning
+
+- `plan_gtfs_route_geometry()` makes route-geometry mode explicit before persistence wiring. The default mode is
+  `diagnostic-only`, which reports coverage-accepted pattern eligibility but returns no synthesis inputs.
+- `infer-network-paths` mode returns the same eligible coverage-approved patterns as synthesis inputs. This keeps
+  conservative coverage review separate from inferred route generation and gives future import wiring an explicit mode
+  boundary.
+
 ## Diagnostic Persistence Decision
 
 - Per-segment quality diagnostics will remain in memory and/or report artifacts for this change.

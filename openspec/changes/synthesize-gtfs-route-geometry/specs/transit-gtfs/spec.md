@@ -15,6 +15,11 @@ used for transit graph creation or assignment.
 - **THEN** the system SHALL report counts of source-shaped, inferred, fallback, trimmed, and rejected patterns
 - **AND** report segment-level reasons for fallback or rejection
 
+#### Scenario: Keeping diagnostic-only review separate
+- **WHEN** GTFS route review is requested in diagnostic-only mode
+- **THEN** the system SHALL report coverage and synthesis eligibility without producing inferred geometry
+- **AND** SHALL require an explicit inference/import mode before route geometry or link sequences are synthesized
+
 ### Requirement: GTFS shapes guide route synthesis when available
 The system SHALL use GTFS `shapes.txt` as the preferred route-geometry source when a route pattern's trips reference
 usable shape IDs.
