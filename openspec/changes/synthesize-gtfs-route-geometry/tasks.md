@@ -15,11 +15,11 @@
 
 ## 3. Stop-To-Stop Inference
 
-- [ ] 3.1 Implement stop matching for retained GTFS pattern stops against route-type modal links and fallback compatible links.
-- [ ] 3.2 Build stop-to-stop shortest path reconstruction over the project network using distance as the initial routing cost.
-- [ ] 3.3 Assemble segment paths into route geometry, route links, and pattern mapping candidates.
-- [ ] 3.4 Reject segments or patterns that cannot match stops, cannot connect stop pairs, or violate configured maximum thresholds.
-- [ ] 3.5 Add focused tests for connected inference, unmatched stops, disconnected stop pairs, and excessive detours.
+- [x] 3.1 Implement stop matching for retained GTFS pattern stops against route-type modal links and fallback compatible links.
+- [x] 3.2 Build stop-to-stop shortest path reconstruction over the project network using distance as the initial routing cost.
+- [x] 3.3 Assemble segment paths into route geometry, route links, and pattern mapping candidates.
+- [x] 3.4 Reject segments or patterns that cannot match stops, cannot connect stop pairs, or violate configured maximum thresholds.
+- [x] 3.5 Add focused tests for connected inference, unmatched stops, disconnected stop pairs, and excessive detours.
 
 ## 4. Street-Priority Preference
 

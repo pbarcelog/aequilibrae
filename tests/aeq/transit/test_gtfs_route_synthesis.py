@@ -1,8 +1,9 @@
 from types import SimpleNamespace
 
+import geopandas as gpd
 import pandas as pd
 import pytest
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 
 from aequilibrae.transit.gtfs_coverage import (
     FULLY_COVERED,
@@ -16,13 +17,23 @@ from aequilibrae.transit.gtfs_coverage import (
 )
 from aequilibrae.transit.gtfs_route_synthesis import (
     GEOMETRY_SOURCE_INFERRED_PREFERRED,
+    GEOMETRY_SOURCE_INFERRED_FALLBACK,
+    GEOMETRY_SOURCE_REJECTED,
     GTFSRouteSynthesisConfig,
     PatternMappingRow,
+    REJECT_DISCONNECTED_STOP_PAIR,
+    REJECT_EXCESSIVE_SEGMENT_DISTANCE,
+    REJECT_UNMATCHED_STOP,
+    SEGMENT_OK,
+    SEGMENT_REJECTED,
     SegmentPathDiagnostics,
     SynthesizedPatternGeometry,
     SynthesizedSegmentPath,
+    infer_stop_to_stop_segment,
     inventory_gtfs_geometry_sources,
+    match_stop_to_network,
     route_pattern_synthesis_inputs,
+    synthesize_inferred_pattern_geometry,
 )
 
 
@@ -135,6 +146,119 @@ def test_synthesis_config_defaults_match_initial_no_shape_assumptions():
     assert "highway" in config.priority_fields
 
 
+def test_match_stop_to_network_prefers_modal_links_before_fallback():
+    links = _network_links()
+
+    modal_match = match_stop_to_network(
+        "A",
+        1,
+        Point(0, 0),
+        route_type=3,
+        network_links=links,
+        config=GTFSRouteSynthesisConfig(stop_match_distance=5, fallback_stop_match_distance=25),
+    )
+    fallback_match = match_stop_to_network(
+        "OFF",
+        99,
+        Point(50, 20),
+        route_type=3,
+        network_links=links,
+        config=GTFSRouteSynthesisConfig(stop_match_distance=5, fallback_stop_match_distance=25),
+    )
+
+    assert modal_match.status == "matched-modal-link"
+    assert modal_match.candidates[0].link_id == 10
+    assert fallback_match.status == "matched-fallback-link"
+    assert fallback_match.candidates[0].link_id == 99
+
+
+def test_infer_stop_to_stop_segment_finds_fallback_shortest_distance_path():
+    links = _network_links()
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("C", 3, Point(200, 0), 3, links)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links)
+
+    assert segment.diagnostics.status == SEGMENT_OK
+    assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
+    assert segment.link_ids == (10, 11)
+    assert segment.directions == (1, 1)
+    assert segment.diagnostics.fallback_path_distance == 200.0
+    assert list(segment.geometry.coords) == [(0.0, 0.0), (100.0, 0.0), (200.0, 0.0)]
+
+
+def test_synthesize_inferred_pattern_geometry_assembles_mapping_and_rejects_none():
+    links = _network_links()
+    pattern = _pattern("R1", ("A", "B", "C"))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {
+        1: SimpleNamespace(geo=Point(0, 0)),
+        2: SimpleNamespace(geo=Point(100, 0)),
+        3: SimpleNamespace(geo=Point(200, 0)),
+    }
+
+    result = synthesize_inferred_pattern_geometry(synthesis_input, stops, links, pattern_id=1001)
+
+    assert result.accepted
+    assert result.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
+    assert [row.link_id for row in result.pattern_mapping] == [10, 11]
+    assert [row.seq for row in result.pattern_mapping] == [0, 1]
+    assert len(result.segments) == 2
+    assert all(diagnostic.status == SEGMENT_OK for diagnostic in result.diagnostics)
+
+
+def test_synthesize_inferred_pattern_geometry_rejects_unmatched_stops():
+    links = _network_links()
+    pattern = _pattern("R1", ("A", "B"))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {
+        1: SimpleNamespace(geo=Point(0, 0)),
+        2: SimpleNamespace(geo=Point(500, 500)),
+    }
+
+    result = synthesize_inferred_pattern_geometry(
+        synthesis_input,
+        stops,
+        links,
+        config=GTFSRouteSynthesisConfig(stop_match_distance=5, fallback_stop_match_distance=10),
+    )
+
+    assert not result.accepted
+    assert result.geometry_source == GEOMETRY_SOURCE_REJECTED
+    assert result.rejection_reason == REJECT_UNMATCHED_STOP
+    assert result.diagnostics[0].status == SEGMENT_REJECTED
+
+
+def test_infer_stop_to_stop_segment_rejects_disconnected_stop_pairs():
+    links = _network_links(connected=False)
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("C", 3, Point(200, 0), 3, links)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links)
+
+    assert segment.diagnostics.status == SEGMENT_REJECTED
+    assert segment.diagnostics.reason == REJECT_DISCONNECTED_STOP_PAIR
+
+
+def test_infer_stop_to_stop_segment_rejects_excessive_distance():
+    links = _network_links()
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("C", 3, Point(200, 0), 3, links)
+
+    segment = infer_stop_to_stop_segment(
+        0,
+        from_match,
+        to_match,
+        3,
+        links,
+        config=GTFSRouteSynthesisConfig(maximum_segment_distance=150),
+    )
+
+    assert segment.diagnostics.status == SEGMENT_REJECTED
+    assert segment.diagnostics.reason == REJECT_EXCESSIVE_SEGMENT_DISTANCE
+    assert segment.diagnostics.selected_path_distance == 200.0
+
+
 def _pattern(route_id, stop_ids):
     return GTFSRoutePattern(
         route_id=route_id,
@@ -144,6 +268,52 @@ def _pattern(route_id, stop_ids):
         internal_stop_ids=tuple(range(1, len(stop_ids) + 1)),
         trip_ids=(f"T-{route_id}",),
         internal_route_id=1,
+    )
+
+
+def _synthesis_input(pattern):
+    return SimpleNamespace(
+        pattern=pattern,
+        coverage_decision=_decision(pattern, FULLY_COVERED),
+        retained_stop_ids=pattern.stop_ids,
+        retained_internal_stop_ids=pattern.internal_stop_ids,
+    )
+
+
+def _network_links(connected=True):
+    second_a_node = 2 if connected else 4
+    return gpd.GeoDataFrame(
+        [
+            {
+                "link_id": 10,
+                "a_node": 1,
+                "b_node": 2,
+                "direction": 1,
+                "distance": 100.0,
+                "modes": "t",
+                "geometry": LineString([(0, 0), (100, 0)]),
+            },
+            {
+                "link_id": 11,
+                "a_node": second_a_node,
+                "b_node": 3,
+                "direction": 1,
+                "distance": 100.0,
+                "modes": "t",
+                "geometry": LineString([(100, 0), (200, 0)]),
+            },
+            {
+                "link_id": 99,
+                "a_node": 9,
+                "b_node": 10,
+                "direction": 0,
+                "distance": 100.0,
+                "modes": "c",
+                "geometry": LineString([(0, 20), (100, 20)]),
+            },
+        ],
+        geometry="geometry",
+        crs="EPSG:3857",
     )
 
 
@@ -213,6 +383,7 @@ def _trip(trip_id, shape_id=""):
         service_id="WK",
         shape_id=shape_id,
     )
+
 
 @pytest.fixture
 def shape_bearing_gtfs_data():

@@ -14,3 +14,15 @@
 - Unit fixtures now cover a shape-bearing feed where one trip has a loaded `shape_id` and another references a missing shape.
 - Unit fixtures also cover a no-shape feed, matching the current Karlsruhe GTFS constraint.
 - A real local `shapes.txt` example is still absent and remains a validation todo for the shape-guided happy path.
+
+## Stop-To-Stop Segment Solver Spike
+
+- Retained GTFS stops are now matched symmetrically to candidate network links. Modal candidates inside
+  `stop_match_distance` are preferred; fallback candidates inside `fallback_stop_match_distance` are used only when no
+  modal candidate exists.
+- The first stop-to-stop solver builds a directed link graph from `a_node`, `b_node`, `direction`, and a distance cost
+  field, then searches candidate origin and destination access states with Dijkstra.
+- The spike assembles inferred fallback segment geometry, pattern-mapping rows, and rejection diagnostics for unmatched
+  stops, disconnected stop pairs, unsupported route types, and excessive segment distance.
+- Current simplification: stop access uses full candidate links at segment ends rather than splitting/projecting links
+  at the exact stop projection. This is acceptable for the spike and should be reviewed before persistence wiring.
