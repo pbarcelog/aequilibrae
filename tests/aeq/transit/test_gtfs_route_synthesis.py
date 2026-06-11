@@ -39,6 +39,7 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     inventory_gtfs_geometry_sources,
     match_stop_to_network,
     route_pattern_synthesis_inputs,
+    summarize_synthesized_patterns,
     synthesize_inferred_pattern_geometry,
 )
 
@@ -155,6 +156,51 @@ def test_synthesis_result_data_structures_capture_segment_and_mapping_quality():
     assert result.segments[0].link_ids == (10, 11)
     assert result.pattern_mapping[1].link_id == 11
     assert result.diagnostics[0].detour_ratio == 1.25
+
+
+def test_summarize_synthesized_patterns_reports_quality_by_review_dimension():
+    preferred = _synthesized_result("R1", GEOMETRY_SOURCE_INFERRED_PREFERRED)
+    fallback = _synthesized_result(
+        "R1",
+        GEOMETRY_SOURCE_INFERRED_FALLBACK,
+        fallback_reason=FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED,
+    )
+    rejected = _synthesized_result(
+        "R2",
+        GEOMETRY_SOURCE_REJECTED,
+        accepted=False,
+        rejection_reason=REJECT_INSUFFICIENT_RETAINED_STOPS,
+        stop_ids=("X",),
+    )
+
+    summary = summarize_synthesized_patterns((preferred, fallback, rejected))
+
+    assert len(summary.pattern_summary) == 3
+    assert len(summary.segment_summary) == 2
+
+    route_summary = summary.route_summary.set_index("route_id")
+    assert route_summary.loc["R1", "pattern_count"] == 2
+    assert route_summary.loc["R1", "accepted_patterns"] == 2
+    assert route_summary.loc["R1", "inferred_preferred_segment_count"] == 1
+    assert route_summary.loc["R1", "inferred_fallback_segment_count"] == 1
+    assert route_summary.loc["R2", "rejected_patterns"] == 1
+
+    route_type_summary = summary.route_type_summary.set_index("route_type")
+    assert route_type_summary.loc[3, "pattern_count"] == 3
+    assert route_type_summary.loc[3, "accepted_patterns"] == 2
+
+    source_counts = summary.geometry_source_summary.set_index(["level", "geometry_source"])["count"]
+    assert source_counts.loc[("pattern", GEOMETRY_SOURCE_INFERRED_PREFERRED)] == 1
+    assert source_counts.loc[("pattern", GEOMETRY_SOURCE_INFERRED_FALLBACK)] == 1
+    assert source_counts.loc[("pattern", GEOMETRY_SOURCE_REJECTED)] == 1
+    assert source_counts.loc[("segment", GEOMETRY_SOURCE_INFERRED_PREFERRED)] == 1
+    assert source_counts.loc[("segment", GEOMETRY_SOURCE_INFERRED_FALLBACK)] == 1
+
+    fallback_reasons = summary.fallback_reason_summary.set_index("reason")
+    assert fallback_reasons.loc[FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED, "segment_count"] == 1
+
+    rejection_reasons = summary.rejection_reason_summary.set_index(["level", "reason"])
+    assert rejection_reasons.loc[("pattern", REJECT_INSUFFICIENT_RETAINED_STOPS), "count"] == 1
 
 
 def test_synthesis_config_defaults_match_initial_no_shape_assumptions():
@@ -384,6 +430,63 @@ def test_synthesis_cache_reuses_stop_matches_graphs_and_stop_pair_paths():
     assert stats.graph_builds == 1
     assert stats.path_misses == 2
     assert stats.path_hits == 2
+
+
+def _synthesized_result(
+    route_id,
+    geometry_source,
+    accepted=True,
+    fallback_reason=None,
+    rejection_reason=None,
+    stop_ids=("A", "B"),
+):
+    pattern = _pattern(route_id, stop_ids)
+    geometry = LineString([(0, 0), (100, 0)]) if accepted else None
+    diagnostics = ()
+    segments = ()
+    mapping = ()
+    if accepted:
+        diagnostic = SegmentPathDiagnostics(
+            seq=0,
+            from_stop_id=stop_ids[0],
+            to_stop_id=stop_ids[1],
+            status=SEGMENT_OK,
+            geometry_source=geometry_source,
+            reason=fallback_reason,
+            selected_path_distance=100.0,
+            preferred_path_distance=100.0 if geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED else None,
+            fallback_path_distance=100.0,
+        )
+        segments = (
+            SynthesizedSegmentPath(
+                seq=0,
+                from_stop_id=stop_ids[0],
+                to_stop_id=stop_ids[1],
+                from_internal_stop_id=1,
+                to_internal_stop_id=2,
+                link_ids=(10,),
+                directions=(1,),
+                geometry=geometry,
+                geometry_source=geometry_source,
+                diagnostics=diagnostic,
+            ),
+        )
+        diagnostics = (diagnostic,)
+        mapping = (PatternMappingRow(pattern_id=1001, seq=0, link_id=10, direction=1, geometry=geometry),)
+
+    return SynthesizedPatternGeometry(
+        pattern=pattern,
+        coverage_decision=_decision(pattern, FULLY_COVERED) if accepted else _decision(pattern, rejection_reason),
+        retained_stop_ids=pattern.stop_ids,
+        retained_internal_stop_ids=pattern.internal_stop_ids,
+        segments=segments,
+        pattern_mapping=mapping,
+        geometry=geometry,
+        geometry_source=geometry_source,
+        accepted=accepted,
+        rejection_reason=rejection_reason,
+        diagnostics=diagnostics,
+    )
 
 
 def _pattern(route_id, stop_ids):

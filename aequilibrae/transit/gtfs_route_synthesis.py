@@ -6,6 +6,7 @@ from math import isfinite
 from typing import Iterable
 
 import geopandas as gpd
+import pandas as pd
 from shapely.geometry import LineString
 from shapely.ops import linemerge
 
@@ -343,6 +344,44 @@ class SynthesizedPatternGeometry:
     diagnostics: tuple[SegmentPathDiagnostics, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class GTFSSynthesisQualitySummary:
+    """Report-ready GTFS route synthesis quality tables."""
+
+    pattern_summary: pd.DataFrame
+    segment_summary: pd.DataFrame
+    route_summary: pd.DataFrame
+    route_type_summary: pd.DataFrame
+    geometry_source_summary: pd.DataFrame
+    fallback_reason_summary: pd.DataFrame
+    rejection_reason_summary: pd.DataFrame
+
+
+def summarize_synthesized_patterns(
+    results: Iterable[SynthesizedPatternGeometry],
+) -> GTFSSynthesisQualitySummary:
+    """Build report tables for synthesized GTFS route-pattern geometry results."""
+
+    pattern_rows = []
+    segment_rows = []
+    for pattern_index, result in enumerate(results):
+        pattern_rows.append(_pattern_summary_row(pattern_index, result))
+        segment_rows.extend(_segment_summary_rows(pattern_index, result))
+
+    pattern_summary = pd.DataFrame(pattern_rows, columns=_PATTERN_SUMMARY_COLUMNS)
+    segment_summary = pd.DataFrame(segment_rows, columns=_SEGMENT_SUMMARY_COLUMNS)
+
+    return GTFSSynthesisQualitySummary(
+        pattern_summary=pattern_summary,
+        segment_summary=segment_summary,
+        route_summary=_pattern_group_summary(pattern_summary, ("route_id", "route_type")),
+        route_type_summary=_pattern_group_summary(pattern_summary, ("route_type",)),
+        geometry_source_summary=_geometry_source_summary(pattern_summary, segment_summary),
+        fallback_reason_summary=_fallback_reason_summary(segment_summary),
+        rejection_reason_summary=_rejection_reason_summary(pattern_summary, segment_summary),
+    )
+
+
 def match_stop_to_network(
     stop_id: str,
     internal_stop_id: int,
@@ -650,6 +689,193 @@ def route_pattern_synthesis_inputs(
             )
         )
     return tuple(inputs)
+
+
+_PATTERN_SUMMARY_COLUMNS = [
+    "pattern_index",
+    "route_id",
+    "route_type",
+    "direction_id",
+    "pattern_key",
+    "coverage_decision",
+    "accepted",
+    "geometry_source",
+    "rejection_reason",
+    "original_stop_count",
+    "retained_stop_count",
+    "trimmed",
+    "segment_count",
+    "mapping_row_count",
+    "inferred_preferred_segment_count",
+    "inferred_fallback_segment_count",
+    "rejected_segment_count",
+]
+
+_SEGMENT_SUMMARY_COLUMNS = [
+    "pattern_index",
+    "route_id",
+    "route_type",
+    "direction_id",
+    "pattern_key",
+    "seq",
+    "from_stop_id",
+    "to_stop_id",
+    "status",
+    "geometry_source",
+    "reason",
+    "selected_path_distance",
+    "preferred_path_distance",
+    "fallback_path_distance",
+    "detour_ratio",
+    "link_count",
+    "flags",
+]
+
+
+def _pattern_summary_row(pattern_index: int, result: SynthesizedPatternGeometry) -> dict:
+    decision = result.coverage_decision
+    original_stop_count = decision.original_stop_count if decision is not None else len(result.pattern.stop_ids)
+    retained_stop_count = len(result.retained_stop_ids)
+    return {
+        "pattern_index": pattern_index,
+        "route_id": result.pattern.route_id,
+        "route_type": result.pattern.route_type,
+        "direction_id": result.pattern.direction_id,
+        "pattern_key": repr(result.pattern.key),
+        "coverage_decision": None if decision is None else decision.decision,
+        "accepted": result.accepted,
+        "geometry_source": result.geometry_source,
+        "rejection_reason": result.rejection_reason,
+        "original_stop_count": original_stop_count,
+        "retained_stop_count": retained_stop_count,
+        "trimmed": retained_stop_count < original_stop_count,
+        "segment_count": len(result.segments),
+        "mapping_row_count": len(result.pattern_mapping),
+        "inferred_preferred_segment_count": _segment_count(result, GEOMETRY_SOURCE_INFERRED_PREFERRED),
+        "inferred_fallback_segment_count": _segment_count(result, GEOMETRY_SOURCE_INFERRED_FALLBACK),
+        "rejected_segment_count": _segment_count(result, GEOMETRY_SOURCE_REJECTED),
+    }
+
+
+def _segment_summary_rows(pattern_index: int, result: SynthesizedPatternGeometry) -> list[dict]:
+    rows = []
+    segments_by_seq = {segment.seq: segment for segment in result.segments}
+    diagnostics = result.diagnostics or tuple(segment.diagnostics for segment in result.segments)
+    for diagnostic in diagnostics:
+        segment = segments_by_seq.get(diagnostic.seq)
+        rows.append(
+            {
+                "pattern_index": pattern_index,
+                "route_id": result.pattern.route_id,
+                "route_type": result.pattern.route_type,
+                "direction_id": result.pattern.direction_id,
+                "pattern_key": repr(result.pattern.key),
+                "seq": diagnostic.seq,
+                "from_stop_id": diagnostic.from_stop_id,
+                "to_stop_id": diagnostic.to_stop_id,
+                "status": diagnostic.status,
+                "geometry_source": diagnostic.geometry_source,
+                "reason": diagnostic.reason,
+                "selected_path_distance": diagnostic.selected_path_distance,
+                "preferred_path_distance": diagnostic.preferred_path_distance,
+                "fallback_path_distance": diagnostic.fallback_path_distance,
+                "detour_ratio": diagnostic.detour_ratio,
+                "link_count": 0 if segment is None else len(segment.link_ids),
+                "flags": ",".join(diagnostic.flags),
+            }
+        )
+    return rows
+
+
+def _segment_count(result: SynthesizedPatternGeometry, geometry_source: str) -> int:
+    return sum(1 for segment in result.segments if segment.geometry_source == geometry_source)
+
+
+def _pattern_group_summary(pattern_summary: pd.DataFrame, group_columns: tuple[str, ...]) -> pd.DataFrame:
+    columns = [
+        *group_columns,
+        "pattern_count",
+        "accepted_patterns",
+        "rejected_patterns",
+        "original_stop_count",
+        "retained_stop_count",
+        "trimmed_patterns",
+        "segment_count",
+        "mapping_row_count",
+        "inferred_preferred_segment_count",
+        "inferred_fallback_segment_count",
+        "rejected_segment_count",
+    ]
+    if pattern_summary.empty:
+        return pd.DataFrame(columns=columns)
+
+    grouped = (
+        pattern_summary.groupby(list(group_columns), dropna=False)
+        .agg(
+            pattern_count=("pattern_index", "count"),
+            accepted_patterns=("accepted", "sum"),
+            original_stop_count=("original_stop_count", "sum"),
+            retained_stop_count=("retained_stop_count", "sum"),
+            trimmed_patterns=("trimmed", "sum"),
+            segment_count=("segment_count", "sum"),
+            mapping_row_count=("mapping_row_count", "sum"),
+            inferred_preferred_segment_count=("inferred_preferred_segment_count", "sum"),
+            inferred_fallback_segment_count=("inferred_fallback_segment_count", "sum"),
+            rejected_segment_count=("rejected_segment_count", "sum"),
+        )
+        .reset_index()
+    )
+    grouped["rejected_patterns"] = grouped["pattern_count"] - grouped["accepted_patterns"]
+    return grouped[columns]
+
+
+def _geometry_source_summary(pattern_summary: pd.DataFrame, segment_summary: pd.DataFrame) -> pd.DataFrame:
+    columns = ["level", "geometry_source", "count"]
+    frames = []
+    if not pattern_summary.empty:
+        patterns = pattern_summary.groupby("geometry_source", dropna=False).size().reset_index(name="count")
+        patterns.insert(0, "level", "pattern")
+        frames.append(patterns)
+    if not segment_summary.empty:
+        segments = segment_summary.groupby("geometry_source", dropna=False).size().reset_index(name="count")
+        segments.insert(0, "level", "segment")
+        frames.append(segments)
+    if not frames:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(frames, ignore_index=True)[columns].sort_values(columns[:2]).reset_index(drop=True)
+
+
+def _fallback_reason_summary(segment_summary: pd.DataFrame) -> pd.DataFrame:
+    columns = ["reason", "segment_count"]
+    if segment_summary.empty:
+        return pd.DataFrame(columns=columns)
+    fallbacks = segment_summary[segment_summary["geometry_source"] == GEOMETRY_SOURCE_INFERRED_FALLBACK].copy()
+    if fallbacks.empty:
+        return pd.DataFrame(columns=columns)
+    fallbacks["reason"] = fallbacks["reason"].fillna("none")
+    return fallbacks.groupby("reason", dropna=False).size().reset_index(name="segment_count").sort_values("reason")
+
+
+def _rejection_reason_summary(pattern_summary: pd.DataFrame, segment_summary: pd.DataFrame) -> pd.DataFrame:
+    columns = ["level", "reason", "count"]
+    frames = []
+    if not pattern_summary.empty:
+        rejected_patterns = pattern_summary[~pattern_summary["accepted"]].copy()
+        if not rejected_patterns.empty:
+            rejected_patterns["reason"] = rejected_patterns["rejection_reason"].fillna("none")
+            patterns = rejected_patterns.groupby("reason", dropna=False).size().reset_index(name="count")
+            patterns.insert(0, "level", "pattern")
+            frames.append(patterns)
+    if not segment_summary.empty:
+        rejected_segments = segment_summary[segment_summary["status"] == SEGMENT_REJECTED].copy()
+        if not rejected_segments.empty:
+            rejected_segments["reason"] = rejected_segments["reason"].fillna("none")
+            segments = rejected_segments.groupby("reason", dropna=False).size().reset_index(name="count")
+            segments.insert(0, "level", "segment")
+            frames.append(segments)
+    if not frames:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(frames, ignore_index=True)[columns].sort_values(columns[:2]).reset_index(drop=True)
 
 
 def _trip_lookup(gtfs_data) -> dict[str, object]:
@@ -1052,6 +1278,7 @@ __all__ = [
     "GTFSRouteSynthesisCache",
     "GTFSRouteSynthesisCacheStats",
     "GTFSRouteSynthesisConfig",
+    "GTFSSynthesisQualitySummary",
     "FALLBACK_PREFERRED_EXCESSIVE_DETOUR",
     "FALLBACK_PREFERRED_UNAVAILABLE",
     "FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED",
@@ -1077,5 +1304,6 @@ __all__ = [
     "inventory_gtfs_geometry_sources",
     "match_stop_to_network",
     "route_pattern_synthesis_inputs",
+    "summarize_synthesized_patterns",
     "synthesize_inferred_pattern_geometry",
 ]

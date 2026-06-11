@@ -83,6 +83,17 @@
   practical for a diagnostic checkpoint but still not fast enough to treat as the final import path without further
   profiling or moving more routing work into existing graph machinery.
 
+## Quality Summary Reports
+
+- `summarize_synthesized_patterns()` now turns a collection of `SynthesizedPatternGeometry` results into report-ready
+  pandas tables.
+- The pattern detail table records route ID, route type, direction, coverage decision, retained stop counts, trim flag,
+  geometry source, acceptance status, rejection reason, segment counts, and mapping-row counts.
+- The segment detail table records stop pair, status, geometry source, fallback or rejection reason, selected and
+  alternative path distances, detour ratio, link count, and flags.
+- Grouped summaries are produced by route, route type, geometry source, fallback reason, and rejection reason. These
+  summaries are intended for diagnostic review and export; they do not introduce persistent diagnostic tables.
+
 ## Diagnostic Persistence Decision
 
 - Per-segment quality diagnostics will remain in memory and/or report artifacts for this change.
