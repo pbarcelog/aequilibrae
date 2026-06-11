@@ -11,6 +11,7 @@ from shapely.ops import linemerge
 
 from aequilibrae.transit.gtfs_coverage import (
     FULLY_COVERED,
+    INSUFFICIENT_RETAINED_STOPS,
     TRIM_COVERED,
     GTFSCoverageAnalysis,
     GTFSRoutePattern,
@@ -37,7 +38,7 @@ REJECT_UNSUPPORTED_ROUTE_TYPE = "unsupported-route-type"
 REJECT_UNMATCHED_STOP = "unmatched-stop"
 REJECT_DISCONNECTED_STOP_PAIR = "disconnected-stop-pair"
 REJECT_EXCESSIVE_SEGMENT_DISTANCE = "path-exceeds-maximum-distance"
-REJECT_INSUFFICIENT_RETAINED_STOPS = "insufficient-retained-stops"
+REJECT_INSUFFICIENT_RETAINED_STOPS = INSUFFICIENT_RETAINED_STOPS
 
 FALLBACK_PREFERRED_UNAVAILABLE = "preferred-path-unavailable"
 FALLBACK_PREFERRED_EXCESSIVE_DETOUR = "preferred-path-exceeds-detour-ratio"

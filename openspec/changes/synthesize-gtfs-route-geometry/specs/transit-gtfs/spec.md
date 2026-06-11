@@ -42,9 +42,15 @@ available.
 
 #### Scenario: Inferring stop-to-stop paths
 - **WHEN** a GTFS route pattern has ordered retained stops but no usable GTFS shape
+- **AND** at least two retained stops remain after any coverage trimming
 - **THEN** the system SHALL match retained stops to the project network
 - **AND** compute connected stop-to-stop paths between consecutive retained stops
 - **AND** assemble those segment paths into a route geometry and network link sequence
+
+#### Scenario: Rejecting patterns without enough retained stops
+- **WHEN** coverage trimming leaves fewer than two retained GTFS stops for a route pattern
+- **THEN** the system SHALL reject the pattern before assignment-ready geometry synthesis
+- **AND** report the pattern as insufficient for route geometry rather than as an accepted trimmed pattern
 
 #### Scenario: Rejecting indefensible inferred segments
 - **WHEN** a retained stop cannot be matched, a stop pair cannot be connected, or every candidate path violates

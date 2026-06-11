@@ -36,7 +36,7 @@
 - [ ] 5.3 Produce quality summaries by pattern, route, route type, geometry source, fallback reason, and rejection reason.
 - [x] 5.4 Add graph, stop-match, and repeated stop-pair caching for practical review-scale no-shapes synthesis.
 - [x] 5.5 Run a Karlsruhe no-shapes synthesis review checkpoint and compare inferred output with prior coverage diagnostics.
-- [ ] 5.6 Decide whether per-segment quality diagnostics need durable database storage or can remain report artifacts.
+- [x] 5.6 Decide whether per-segment quality diagnostics need durable database storage or can remain report artifacts.
 
 ## 6. Documentation And Validation
 

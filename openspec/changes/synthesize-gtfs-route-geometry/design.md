@@ -51,7 +51,9 @@ produce qualitative assignment results and expose diagnostics for later editing,
    nearby compatible candidate links, those links yield candidate graph access nodes, and the segment solver evaluates
    paths between the upstream candidate set and downstream candidate set. Distance is the initial cost because it is
    stable and available on links, and because this workflow targets qualitative first results rather than calibrated
-   travel times.
+   travel times. A pattern must retain at least two stops after coverage trimming before it is eligible for
+   assignment-ready route synthesis; one-stop retained patterns are rejected before synthesis because they cannot form a
+   stop-to-stop segment or route-link record.
 
 4. **Score alternative paths by street priority and detour only when stop context supports it.**
 
@@ -78,9 +80,10 @@ produce qualitative assignment results and expose diagnostics for later editing,
 6. **Persist inference quality, not only geometry.**
 
    Transit service tables already hold route geometry and pattern mapping. This change should avoid schema changes in
-   the first implementation if existing fields can carry required route and mapping data. Quality diagnostics can remain
-   in memory or be exported as reports unless persistence is needed later. If durable per-segment quality storage becomes
-   required, it should be handled by a separate database-migration change.
+   the first implementation if existing fields can carry required route and mapping data. The current decision is that
+   quality diagnostics remain in memory or exported report artifacts rather than durable transit database rows. If
+   durable per-segment quality storage becomes required later, it should be handled by a separate database-migration
+   change.
 
 7. **Reject only when inference is not defensible.**
 

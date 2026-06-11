@@ -20,6 +20,7 @@ UNSUPPORTED_ROUTE_TYPE = "unsupported-route-type"
 
 FULLY_COVERED = "fully-covered"
 TRIM_COVERED = "trim-covered"
+INSUFFICIENT_RETAINED_STOPS = "insufficient-retained-stops"
 INTERNAL_GAP = "internal-gap"
 NETWORK_DISCONTINUITY = "network-discontinuity"
 
@@ -257,6 +258,9 @@ def _decide_one_pattern(
 
     first_matched, last_matched = matched_indices[0], matched_indices[-1]
     retained = coverages[first_matched : last_matched + 1]
+    if len(retained) < 2:
+        return _pattern_decision(pattern, INSUFFICIENT_RETAINED_STOPS, coverages, (first_matched, last_matched))
+
     internal_gaps = tuple(coverage for coverage in retained if coverage.status != MATCHED_MODAL_LINK)
     if internal_gaps:
         return _pattern_decision(
@@ -555,6 +559,7 @@ __all__ = [
     "GTFSCoverageAnalysis",
     "GTFSCoverageConfig",
     "GTFSRoutePattern",
+    "INSUFFICIENT_RETAINED_STOPS",
     "INTERNAL_GAP",
     "MATCHED_MODAL_LINK",
     "NEAR_MODEL_NO_MODAL_LINK",

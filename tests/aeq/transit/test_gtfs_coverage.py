@@ -8,6 +8,7 @@ from shapely.geometry import LineString, Point
 from aequilibrae.transit.gtfs_coverage import (
     AMBIGUOUS,
     FULLY_COVERED,
+    INSUFFICIENT_RETAINED_STOPS,
     INTERNAL_GAP,
     MATCHED_MODAL_LINK,
     NEAR_MODEL_NO_MODAL_LINK,
@@ -189,6 +190,16 @@ def test_decide_pattern_coverage_rejects_internal_gap_without_pruning_substitute
     assert decision.retained_stop_ids == ("A", "NEAR", "B")
     assert decision.internal_gap_stop_ids == ("NEAR",)
     assert decision.internal_gap_statuses == (NEAR_MODEL_NO_MODAL_LINK,)
+
+
+def test_decide_pattern_coverage_rejects_trimmed_pattern_with_one_retained_stop():
+    pattern, stops, links = _coverage_fixture(("OUT1", "A", "OUT2"), (98, 1, 99))
+
+    decision = _decision_for(pattern, stops, links)
+
+    assert decision.decision == INSUFFICIENT_RETAINED_STOPS
+    assert decision.retained_stop_count == 1
+    assert decision.retained_stop_ids == ("A",)
 
 
 def test_decide_pattern_coverage_skips_unsupported_route_type():

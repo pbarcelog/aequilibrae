@@ -67,8 +67,10 @@
 
 ## Karlsruhe Full No-Shapes Review Checkpoint
 
-- A full review over all 288 coverage-accepted Karlsruhe GTFS patterns completed with one shared
-  `GTFSRouteSynthesisCache`.
+- A full review over all 288 previously coverage-accepted Karlsruhe GTFS patterns completed with one shared
+  `GTFSRouteSynthesisCache`. The review exposed that 94 of those patterns retained fewer than two stops after trimming.
+- The coverage/synthesis contract now treats fewer than two retained stops as `insufficient-retained-stops`, so those 94
+  patterns should be rejected before assignment-ready synthesis in subsequent runs.
 - Results: 194 accepted synthesized patterns and 94 rejected patterns.
 - Pattern sources: 128 `inferred-fallback`, 66 `inferred-preferred`, and 94 `rejected`.
 - Rejection reason: all 94 rejected patterns had `insufficient-retained-stops` after coverage trimming.
@@ -80,3 +82,11 @@
 - Runtime was about 513 seconds including GTFS text scanning, coverage analysis, projection, and synthesis. This is
   practical for a diagnostic checkpoint but still not fast enough to treat as the final import path without further
   profiling or moving more routing work into existing graph machinery.
+
+## Diagnostic Persistence Decision
+
+- Per-segment quality diagnostics will remain in memory and/or report artifacts for this change.
+- Persistence wiring should use diagnostics to gate writes: accepted source-shaped, inferred-preferred, and
+  inferred-fallback patterns can be written; rejected patterns and rejected segments must be skipped and reported.
+- Durable diagnostic tables are deferred. If users later need per-segment quality diagnostics inside the project
+  database, that should be handled by a separate database-migration change.

@@ -7,6 +7,7 @@ from shapely.geometry import LineString, Point
 
 from aequilibrae.transit.gtfs_coverage import (
     FULLY_COVERED,
+    INSUFFICIENT_RETAINED_STOPS,
     INTERNAL_GAP,
     MATCHED_MODAL_LINK,
     GTFSCoverageAnalysis,
@@ -90,6 +91,19 @@ def test_route_pattern_synthesis_inputs_keeps_only_accepted_coverage_decisions()
     assert inputs[0].pattern == accepted_pattern
     assert inputs[0].retained_stop_ids == ("A", "B")
     assert inputs[0].retained_internal_stop_ids == (1, 2)
+
+
+def test_route_pattern_synthesis_inputs_excludes_insufficient_retained_stops():
+    pattern = _pattern("R1", ("A",))
+    analysis = GTFSCoverageAnalysis(
+        patterns=(pattern,),
+        stop_coverage={pattern.key: _coverage_rows(pattern)},
+        pattern_decisions={pattern.key: _decision(pattern, INSUFFICIENT_RETAINED_STOPS)},
+    )
+
+    inputs = route_pattern_synthesis_inputs(analysis)
+
+    assert inputs == ()
 
 
 def test_synthesis_result_data_structures_capture_segment_and_mapping_quality():
