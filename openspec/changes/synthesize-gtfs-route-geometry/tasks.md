@@ -23,11 +23,11 @@
 
 ## 4. Street-Priority Preference
 
-- [ ] 4.1 Add configurable priority extraction for main-street or higher-priority links using available project fields.
-- [ ] 4.2 Compare preferred-path and fallback-path candidates for each stop pair.
-- [ ] 4.3 Choose preferred paths when they are within the configured detour ratio, initially 2.0.
-- [ ] 4.4 Choose and flag fallback paths when preferred paths are unavailable or more than 100% longer than fallback paths.
-- [ ] 4.5 Add tests for preferred-path selection, fallback selection, unavailable preferred paths, and configurable priority fields.
+- [x] 4.1 Add configurable priority extraction for main-street or higher-priority links using available project fields.
+- [x] 4.2 Compare preferred-path and fallback-path candidates for each stop pair.
+- [x] 4.3 Choose preferred paths when they are within the configured detour ratio, initially 2.0.
+- [x] 4.4 Choose and flag fallback paths when preferred paths are unavailable or more than 100% longer than fallback paths.
+- [x] 4.5 Add tests for preferred-path selection, fallback selection, unavailable preferred paths, and configurable priority fields.
 
 ## 5. Persistence And Review Checkpoint
 

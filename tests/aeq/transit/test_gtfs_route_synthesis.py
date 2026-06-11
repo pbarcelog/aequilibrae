@@ -16,6 +16,9 @@ from aequilibrae.transit.gtfs_coverage import (
     build_gtfs_route_patterns,
 )
 from aequilibrae.transit.gtfs_route_synthesis import (
+    FALLBACK_PREFERRED_EXCESSIVE_DETOUR,
+    FALLBACK_PREFERRED_UNAVAILABLE,
+    FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED,
     GEOMETRY_SOURCE_INFERRED_PREFERRED,
     GEOMETRY_SOURCE_INFERRED_FALLBACK,
     GEOMETRY_SOURCE_REJECTED,
@@ -259,6 +262,76 @@ def test_infer_stop_to_stop_segment_rejects_excessive_distance():
     assert segment.diagnostics.selected_path_distance == 200.0
 
 
+def test_infer_stop_to_stop_segment_chooses_preferred_path_within_detour_ratio():
+    links = _priority_network_links(priority_distance=150.0)
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("B", 2, Point(100, 0), 3, links)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links)
+
+    assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED
+    assert segment.link_ids == (20, 21)
+    assert segment.diagnostics.selected_path_distance == 150.0
+    assert segment.diagnostics.preferred_path_distance == 150.0
+    assert segment.diagnostics.fallback_path_distance == 100.0
+    assert segment.diagnostics.detour_ratio == 1.5
+    assert segment.diagnostics.flags == ("preferred-within-detour-ratio",)
+
+
+def test_infer_stop_to_stop_segment_falls_back_when_preferred_path_is_too_long():
+    links = _priority_network_links(priority_distance=250.0)
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("B", 2, Point(100, 0), 3, links)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links)
+
+    assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
+    assert segment.link_ids == (10,)
+    assert segment.diagnostics.reason == FALLBACK_PREFERRED_EXCESSIVE_DETOUR
+    assert segment.diagnostics.preferred_path_distance == 250.0
+    assert segment.diagnostics.fallback_path_distance == 100.0
+    assert segment.diagnostics.detour_ratio == 2.5
+
+
+def test_infer_stop_to_stop_segment_falls_back_when_preferred_path_unavailable():
+    links = _priority_network_links(priority_distance=150.0, connected_priority=False)
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("B", 2, Point(100, 0), 3, links)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links)
+
+    assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
+    assert segment.link_ids == (10,)
+    assert segment.diagnostics.reason == FALLBACK_PREFERRED_UNAVAILABLE
+    assert segment.diagnostics.preferred_path_distance is None
+    assert segment.diagnostics.fallback_path_distance == 100.0
+
+
+def test_infer_stop_to_stop_segment_skips_priority_when_stop_context_is_secondary():
+    links = _priority_network_links(priority_distance=150.0)
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links)
+    to_match = match_stop_to_network("LOCAL", 2, Point(100, 30), 3, links)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links)
+
+    assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
+    assert segment.diagnostics.reason == FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED
+
+
+def test_priority_extraction_uses_configurable_fields_and_values():
+    links = _priority_network_links(priority_distance=150.0, priority_field="pt_priority", priority_value="yes")
+    config = GTFSRouteSynthesisConfig(priority_fields=("pt_priority",), preferred_priority_values=("yes",))
+    from_match = match_stop_to_network("A", 1, Point(0, 0), 3, links, config=config)
+    to_match = match_stop_to_network("B", 2, Point(100, 0), 3, links, config=config)
+
+    segment = infer_stop_to_stop_segment(0, from_match, to_match, 3, links, config=config)
+
+    assert from_match.candidates[1].is_priority
+    assert to_match.candidates[1].is_priority
+    assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED
+    assert segment.link_ids == (20, 21)
+
+
 def _pattern(route_id, stop_ids):
     return GTFSRoutePattern(
         route_id=route_id,
@@ -315,6 +388,59 @@ def _network_links(connected=True):
         geometry="geometry",
         crs="EPSG:3857",
     )
+
+
+def _priority_network_links(
+    priority_distance,
+    connected_priority=True,
+    priority_field="highway",
+    priority_value="primary",
+):
+    second_priority_a_node = 5 if connected_priority else 6
+    half_distance = priority_distance / 2.0
+    rows = [
+        {
+            "link_id": 10,
+            "a_node": 1,
+            "b_node": 2,
+            "direction": 1,
+            "distance": 100.0,
+            "modes": "t",
+            "geometry": LineString([(0, 0), (100, 0)]),
+            priority_field: "local",
+        },
+        {
+            "link_id": 20,
+            "a_node": 3,
+            "b_node": 5,
+            "direction": 1,
+            "distance": half_distance,
+            "modes": "t",
+            "geometry": LineString([(0, 0), (50, 10)]),
+            priority_field: priority_value,
+        },
+        {
+            "link_id": 21,
+            "a_node": second_priority_a_node,
+            "b_node": 4,
+            "direction": 1,
+            "distance": half_distance,
+            "modes": "t",
+            "geometry": LineString([(50, 10), (100, 0)]),
+            priority_field: priority_value,
+        },
+        {
+            "link_id": 30,
+            "a_node": 2,
+            "b_node": 8,
+            "direction": 1,
+            "distance": 40.0,
+            "modes": "t",
+            "geometry": LineString([(100, 0), (100, 40)]),
+            priority_field: "local",
+        },
+    ]
+    return gpd.GeoDataFrame(rows, geometry="geometry", crs="EPSG:3857")
 
 
 def _coverage_rows(pattern):

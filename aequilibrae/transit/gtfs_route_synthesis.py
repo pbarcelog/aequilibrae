@@ -38,6 +38,10 @@ REJECT_UNMATCHED_STOP = "unmatched-stop"
 REJECT_DISCONNECTED_STOP_PAIR = "disconnected-stop-pair"
 REJECT_EXCESSIVE_SEGMENT_DISTANCE = "path-exceeds-maximum-distance"
 
+FALLBACK_PREFERRED_UNAVAILABLE = "preferred-path-unavailable"
+FALLBACK_PREFERRED_EXCESSIVE_DETOUR = "preferred-path-exceeds-detour-ratio"
+FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED = "priority-context-unsupported"
+
 
 @dataclass(frozen=True)
 class GTFSRouteSynthesisConfig:
@@ -114,6 +118,7 @@ class StopLinkCandidate:
     direction: int
     distance: float
     is_modal: bool
+    is_priority: bool
     geometry: LineString
 
 
@@ -268,11 +273,24 @@ def infer_stop_to_stop_segment(
 
     link_rows = {int(row[config.link_id_field]): row for _, row in modal_links.iterrows()}
     graph = _build_link_graph(modal_links, config)
-    path = _best_segment_path(from_match.candidates, to_match.candidates, graph, link_rows, config)
-    if path is None:
+    fallback_path = _best_segment_path(from_match.candidates, to_match.candidates, graph, link_rows, config)
+    if fallback_path is None:
         return _rejected_segment(seq, from_match, to_match, REJECT_DISCONNECTED_STOP_PAIR)
 
+    preferred_path, fallback_reason = _preferred_segment_path(from_match, to_match, modal_links, config)
+    path = _choose_segment_path(preferred_path, fallback_path, config)
     link_ids, directions, distance = path
+    preferred_distance = None if preferred_path is None else preferred_path[2]
+    fallback_distance = fallback_path[2]
+    detour_ratio = (
+        None if preferred_distance is None or fallback_distance <= 0 else preferred_distance / fallback_distance
+    )
+    geometry_source = (
+        GEOMETRY_SOURCE_INFERRED_PREFERRED if path is preferred_path else GEOMETRY_SOURCE_INFERRED_FALLBACK
+    )
+    if geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK and preferred_path is not None:
+        fallback_reason = FALLBACK_PREFERRED_EXCESSIVE_DETOUR
+
     if config.maximum_segment_distance is not None and distance > config.maximum_segment_distance:
         return _rejected_segment(
             seq,
@@ -288,10 +306,13 @@ def infer_stop_to_stop_segment(
         from_stop_id=from_match.stop_id,
         to_stop_id=to_match.stop_id,
         status=SEGMENT_OK,
-        geometry_source=GEOMETRY_SOURCE_INFERRED_FALLBACK,
+        geometry_source=geometry_source,
+        reason=fallback_reason if geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK else None,
         selected_path_distance=distance,
-        fallback_path_distance=distance,
-        flags=("fallback-shortest-distance",),
+        preferred_path_distance=preferred_distance,
+        fallback_path_distance=fallback_distance,
+        detour_ratio=detour_ratio,
+        flags=_segment_flags(geometry_source, fallback_reason),
     )
     return SynthesizedSegmentPath(
         seq=seq,
@@ -302,7 +323,7 @@ def infer_stop_to_stop_segment(
         link_ids=link_ids,
         directions=directions,
         geometry=geometry,
-        geometry_source=GEOMETRY_SOURCE_INFERRED_FALLBACK,
+        geometry_source=geometry_source,
         diagnostics=diagnostics,
     )
 
@@ -371,7 +392,7 @@ def synthesize_inferred_pattern_geometry(
         segments=segments,
         pattern_mapping=mapping,
         geometry=geometry,
-        geometry_source=GEOMETRY_SOURCE_INFERRED_FALLBACK,
+        geometry_source=_pattern_geometry_source(segments),
         accepted=True,
         diagnostics=diagnostics,
     )
@@ -482,10 +503,91 @@ def _candidate_links(
                 direction=int(row[config.direction_field]),
                 distance=float(distance),
                 is_modal=is_modal,
+                is_priority=_is_priority_link(row, config),
                 geometry=row.geometry,
             )
         )
     return tuple(candidates)
+
+
+def _preferred_segment_path(
+    from_match: StopNetworkMatch,
+    to_match: StopNetworkMatch,
+    modal_links: gpd.GeoDataFrame,
+    config: GTFSRouteSynthesisConfig,
+) -> tuple[tuple[tuple[int, ...], tuple[int, ...], float] | None, str | None]:
+    if not _priority_context_supported(from_match, to_match):
+        return None, FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED
+
+    priority_links = modal_links[_priority_mask(modal_links, config)]
+    if priority_links.empty:
+        return None, FALLBACK_PREFERRED_UNAVAILABLE
+
+    priority_link_ids = {int(row[config.link_id_field]) for _, row in priority_links.iterrows()}
+    from_candidates = tuple(candidate for candidate in from_match.candidates if candidate.link_id in priority_link_ids)
+    to_candidates = tuple(candidate for candidate in to_match.candidates if candidate.link_id in priority_link_ids)
+    if not from_candidates or not to_candidates:
+        return None, FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED
+
+    link_rows = {int(row[config.link_id_field]): row for _, row in priority_links.iterrows()}
+    graph = _build_link_graph(priority_links, config)
+    path = _best_segment_path(from_candidates, to_candidates, graph, link_rows, config)
+    if path is None:
+        return None, FALLBACK_PREFERRED_UNAVAILABLE
+    return path, None
+
+
+def _choose_segment_path(
+    preferred_path: tuple[tuple[int, ...], tuple[int, ...], float] | None,
+    fallback_path: tuple[tuple[int, ...], tuple[int, ...], float],
+    config: GTFSRouteSynthesisConfig,
+) -> tuple[tuple[int, ...], tuple[int, ...], float]:
+    if preferred_path is None:
+        return fallback_path
+    if preferred_path[2] <= fallback_path[2] * config.preferred_path_detour_ratio:
+        return preferred_path
+    return fallback_path
+
+
+def _priority_context_supported(from_match: StopNetworkMatch, to_match: StopNetworkMatch) -> bool:
+    return any(candidate.is_priority for candidate in from_match.candidates) and any(
+        candidate.is_priority for candidate in to_match.candidates
+    )
+
+
+def _priority_mask(links: gpd.GeoDataFrame, config: GTFSRouteSynthesisConfig):
+    mask = None
+    for priority_field in config.priority_fields:
+        if priority_field not in links.columns:
+            continue
+        field_mask = links[priority_field].astype(str).str.lower().isin(config.preferred_priority_values)
+        mask = field_mask if mask is None else mask | field_mask
+    if mask is None:
+        return links.index != links.index
+    return mask
+
+
+def _is_priority_link(row, config: GTFSRouteSynthesisConfig) -> bool:
+    for priority_field in config.priority_fields:
+        if priority_field not in row.index:
+            continue
+        if str(row[priority_field]).lower() in config.preferred_priority_values:
+            return True
+    return False
+
+
+def _segment_flags(geometry_source: str, fallback_reason: str | None) -> tuple[str, ...]:
+    if geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED:
+        return ("preferred-within-detour-ratio",)
+    if fallback_reason is None:
+        return ("fallback-shortest-distance",)
+    return ("fallback-shortest-distance", fallback_reason)
+
+
+def _pattern_geometry_source(segments: tuple[SynthesizedSegmentPath, ...]) -> str:
+    if segments and all(segment.geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED for segment in segments):
+        return GEOMETRY_SOURCE_INFERRED_PREFERRED
+    return GEOMETRY_SOURCE_INFERRED_FALLBACK
 
 
 def _build_link_graph(modal_links: gpd.GeoDataFrame, config: GTFSRouteSynthesisConfig) -> dict[int, list[tuple]]:
@@ -712,6 +814,9 @@ __all__ = [
     "GEOMETRY_SOURCE_SHAPE",
     "GTFSGeometrySourceInventory",
     "GTFSRouteSynthesisConfig",
+    "FALLBACK_PREFERRED_EXCESSIVE_DETOUR",
+    "FALLBACK_PREFERRED_UNAVAILABLE",
+    "FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED",
     "PatternMappingRow",
     "REJECT_DISCONNECTED_STOP_PAIR",
     "REJECT_EXCESSIVE_SEGMENT_DISTANCE",

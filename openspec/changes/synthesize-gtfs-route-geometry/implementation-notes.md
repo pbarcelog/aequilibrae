@@ -26,3 +26,14 @@
   stops, disconnected stop pairs, unsupported route types, and excessive segment distance.
 - Current simplification: stop access uses full candidate links at segment ends rather than splitting/projecting links
   at the exact stop projection. This is acceptable for the spike and should be reviewed before persistence wiring.
+
+## Street-Priority Preference
+
+- Stop candidates now carry a configurable priority classification derived from `GTFSRouteSynthesisConfig.priority_fields`
+  and `preferred_priority_values`.
+- Each stop-to-stop segment always computes the unrestricted modal fallback path first. A preferred path is attempted
+  only when both stop candidate sets include priority links, matching the design decision that local/secondary stop
+  context should not be forced onto main streets.
+- Preferred paths are selected when they are within `preferred_path_detour_ratio` of the fallback path. Otherwise the
+  fallback path is used and diagnostics report either unavailable preferred routing, unsupported priority context, or an
+  excessive preferred detour.
