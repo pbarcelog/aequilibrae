@@ -74,6 +74,153 @@ class GTFSRouteSynthesisConfig:
 
 
 @dataclass(frozen=True)
+class GTFSRouteSynthesisCacheStats:
+    """Cache counters for route synthesis diagnostics and performance review."""
+
+    stop_match_hits: int = 0
+    stop_match_misses: int = 0
+    graph_builds: int = 0
+    path_hits: int = 0
+    path_misses: int = 0
+    dijkstra_hits: int = 0
+    dijkstra_misses: int = 0
+
+
+@dataclass(frozen=True)
+class _RouteTypeGraphContext:
+    links: gpd.GeoDataFrame
+    link_rows: dict[int, object]
+    graph: dict[int, list[tuple]]
+
+
+class GTFSRouteSynthesisCache:
+    """Reusable prepared network and routing cache for GTFS route synthesis."""
+
+    def __init__(self, network_links: gpd.GeoDataFrame, config: GTFSRouteSynthesisConfig | None = None):
+        self.config = GTFSRouteSynthesisConfig() if config is None else config
+        self.links = _prepare_synthesis_links(network_links, self.config)
+        self._stop_matches: dict[tuple[int, int], StopNetworkMatch] = {}
+        self._route_contexts: dict[int, _RouteTypeGraphContext] = {}
+        self._priority_contexts: dict[int, _RouteTypeGraphContext] = {}
+        self._path_cache: dict[tuple, tuple[tuple[int, ...], tuple[int, ...], float] | None] = {}
+        self._dijkstra_cache: dict[tuple[int, bool], dict[int, tuple[dict[int, float], dict[int, list[tuple]]]]] = {}
+        self._stop_match_hits = 0
+        self._stop_match_misses = 0
+        self._graph_builds = 0
+        self._path_hits = 0
+        self._path_misses = 0
+        self._dijkstra_hits = 0
+        self._dijkstra_misses = 0
+
+    @property
+    def stats(self) -> GTFSRouteSynthesisCacheStats:
+        return GTFSRouteSynthesisCacheStats(
+            stop_match_hits=self._stop_match_hits,
+            stop_match_misses=self._stop_match_misses,
+            graph_builds=self._graph_builds,
+            path_hits=self._path_hits,
+            path_misses=self._path_misses,
+            dijkstra_hits=self._dijkstra_hits,
+            dijkstra_misses=self._dijkstra_misses,
+        )
+
+    def match_stop(
+        self,
+        stop_id: str,
+        internal_stop_id: int,
+        stop_geometry,
+        route_type: int,
+    ) -> StopNetworkMatch:
+        key = (route_type, internal_stop_id)
+        if key in self._stop_matches:
+            self._stop_match_hits += 1
+            return self._stop_matches[key]
+        self._stop_match_misses += 1
+        match = _match_stop_to_prepared_network(
+            stop_id,
+            internal_stop_id,
+            stop_geometry,
+            route_type,
+            self.links,
+            self.config,
+        )
+        self._stop_matches[key] = match
+        return match
+
+    def route_context(self, route_type: int) -> _RouteTypeGraphContext | None:
+        return self._context(route_type, priority_only=False)
+
+    def priority_context(self, route_type: int) -> _RouteTypeGraphContext | None:
+        return self._context(route_type, priority_only=True)
+
+    def best_path(
+        self,
+        route_type: int,
+        from_candidates: tuple[StopLinkCandidate, ...],
+        to_candidates: tuple[StopLinkCandidate, ...],
+        priority_only: bool = False,
+    ) -> tuple[tuple[int, ...], tuple[int, ...], float] | None:
+        key = (
+            route_type,
+            priority_only,
+            tuple(candidate.link_id for candidate in from_candidates),
+            tuple(candidate.link_id for candidate in to_candidates),
+        )
+        if key in self._path_cache:
+            self._path_hits += 1
+            return self._path_cache[key]
+        self._path_misses += 1
+        context = self.priority_context(route_type) if priority_only else self.route_context(route_type)
+        if context is None:
+            self._path_cache[key] = None
+            return None
+        dijkstra_cache = self._dijkstra_cache.setdefault((route_type, priority_only), {})
+        path = _best_segment_path(
+            from_candidates,
+            to_candidates,
+            context.graph,
+            context.link_rows,
+            self.config,
+            dijkstra_cache=dijkstra_cache,
+            dijkstra_stats_callback=self._record_dijkstra_cache,
+        )
+        self._path_cache[key] = path
+        return path
+
+    def _record_dijkstra_cache(self, hit: bool) -> None:
+        if hit:
+            self._dijkstra_hits += 1
+        else:
+            self._dijkstra_misses += 1
+
+    def _context(self, route_type: int, priority_only: bool) -> _RouteTypeGraphContext | None:
+        contexts = self._priority_contexts if priority_only else self._route_contexts
+        if route_type in contexts:
+            return contexts[route_type]
+        context = self._build_context(route_type, priority_only)
+        if context is not None:
+            contexts[route_type] = context
+        return context
+
+    def _build_context(self, route_type: int, priority_only: bool) -> _RouteTypeGraphContext | None:
+        if route_type not in mode_corresp:
+            return None
+        route_mode = mode_corresp[route_type]
+        links = self.links[self.links[self.config.mode_field].str.contains(route_mode, regex=False, na=False)]
+        if priority_only:
+            links = links[_priority_mask(links, self.config)]
+        if links.empty:
+            return None
+        self._graph_builds += 1
+        link_rows = {int(row[self.config.link_id_field]): row for _, row in links.iterrows()}
+        return _RouteTypeGraphContext(
+            links=links,
+            link_rows=link_rows,
+            graph=_build_link_graph(links, self.config),
+        )
+
+
+@dataclass(frozen=True)
 class GTFSGeometrySourceInventory:
     """Counts shape-bearing GTFS inputs before route synthesis begins."""
 
@@ -202,11 +349,25 @@ def match_stop_to_network(
     route_type: int,
     network_links: gpd.GeoDataFrame,
     config: GTFSRouteSynthesisConfig | None = None,
+    cache: GTFSRouteSynthesisCache | None = None,
 ) -> StopNetworkMatch:
     """Match one GTFS stop point to nearby route-compatible network links."""
 
+    if cache is not None:
+        return cache.match_stop(stop_id, internal_stop_id, stop_geometry, route_type)
     config = GTFSRouteSynthesisConfig() if config is None else config
     links = _prepare_synthesis_links(network_links, config)
+    return _match_stop_to_prepared_network(stop_id, internal_stop_id, stop_geometry, route_type, links, config)
+
+
+def _match_stop_to_prepared_network(
+    stop_id: str,
+    internal_stop_id: int,
+    stop_geometry,
+    route_type: int,
+    links: gpd.GeoDataFrame,
+    config: GTFSRouteSynthesisConfig,
+) -> StopNetworkMatch:
     if route_type not in mode_corresp or links.empty:
         return StopNetworkMatch(stop_id, internal_stop_id, STOP_UNMATCHED, ())
 
@@ -258,28 +419,46 @@ def infer_stop_to_stop_segment(
     route_type: int,
     network_links: gpd.GeoDataFrame,
     config: GTFSRouteSynthesisConfig | None = None,
+    cache: GTFSRouteSynthesisCache | None = None,
 ) -> SynthesizedSegmentPath:
     """Infer one fallback shortest-distance network path between two matched stops."""
 
-    config = GTFSRouteSynthesisConfig() if config is None else config
+    config = cache.config if cache is not None else GTFSRouteSynthesisConfig() if config is None else config
     if route_type not in mode_corresp:
         return _rejected_segment(seq, from_match, to_match, REJECT_UNSUPPORTED_ROUTE_TYPE)
     if not from_match.candidates or not to_match.candidates:
         return _rejected_segment(seq, from_match, to_match, REJECT_UNMATCHED_STOP)
 
-    links = _prepare_synthesis_links(network_links, config)
-    modal_links = links[links[config.mode_field].str.contains(mode_corresp[route_type], regex=False, na=False)]
-    if modal_links.empty:
-        return _rejected_segment(seq, from_match, to_match, REJECT_UNSUPPORTED_ROUTE_TYPE)
-
-    link_rows = {int(row[config.link_id_field]): row for _, row in modal_links.iterrows()}
-    graph = _build_link_graph(modal_links, config)
-    fallback_path = _best_segment_path(from_match.candidates, to_match.candidates, graph, link_rows, config)
+    if cache is not None:
+        route_context = cache.route_context(route_type)
+        if route_context is None:
+            return _rejected_segment(seq, from_match, to_match, REJECT_UNSUPPORTED_ROUTE_TYPE)
+        link_rows = route_context.link_rows
+        fallback_path = cache.best_path(route_type, from_match.candidates, to_match.candidates)
+    else:
+        links = _prepare_synthesis_links(network_links, config)
+        modal_links = links[links[config.mode_field].str.contains(mode_corresp[route_type], regex=False, na=False)]
+        if modal_links.empty:
+            return _rejected_segment(seq, from_match, to_match, REJECT_UNSUPPORTED_ROUTE_TYPE)
+        link_rows = {int(row[config.link_id_field]): row for _, row in modal_links.iterrows()}
+        graph = _build_link_graph(modal_links, config)
+        fallback_path = _best_segment_path(from_match.candidates, to_match.candidates, graph, link_rows, config)
     if fallback_path is None:
         return _rejected_segment(seq, from_match, to_match, REJECT_DISCONNECTED_STOP_PAIR)
 
-    preferred_path, fallback_reason = _preferred_segment_path(from_match, to_match, modal_links, config)
+    preferred_path, fallback_reason = _preferred_segment_path(
+        from_match, to_match, route_type, network_links, config, cache
+    )
     path = _choose_segment_path(preferred_path, fallback_path, config)
+
+    if cache is not None and path is preferred_path:
+        priority_context = cache.priority_context(route_type)
+        if priority_context is not None:
+            link_rows = priority_context.link_rows
+    elif cache is None and path is preferred_path:
+        priority_links = modal_links[_priority_mask(modal_links, config)]
+        link_rows = {int(row[config.link_id_field]): row for _, row in priority_links.iterrows()}
+
     link_ids, directions, distance = path
     preferred_distance = None if preferred_path is None else preferred_path[2]
     fallback_distance = fallback_path[2]
@@ -335,10 +514,15 @@ def synthesize_inferred_pattern_geometry(
     network_links: gpd.GeoDataFrame,
     pattern_id: int = -1,
     config: GTFSRouteSynthesisConfig | None = None,
+    cache: GTFSRouteSynthesisCache | None = None,
 ) -> SynthesizedPatternGeometry:
     """Infer route geometry and pattern-mapping candidates from retained GTFS stops."""
 
-    config = GTFSRouteSynthesisConfig() if config is None else config
+    if cache is None:
+        config = GTFSRouteSynthesisConfig() if config is None else config
+        cache = GTFSRouteSynthesisCache(network_links, config)
+    else:
+        config = cache.config
     retained_stop_ids = synthesis_input.retained_stop_ids
     retained_internal_stop_ids = synthesis_input.retained_internal_stop_ids
     if len(retained_stop_ids) < 2:
@@ -363,6 +547,7 @@ def synthesize_inferred_pattern_geometry(
             synthesis_input.pattern.route_type,
             network_links,
             config,
+            cache,
         )
         if internal_stop_id in stops and getattr(stops[internal_stop_id], "geo", None) is not None
         else StopNetworkMatch(stop_id, internal_stop_id, STOP_UNMATCHED, ())
@@ -377,6 +562,7 @@ def synthesize_inferred_pattern_geometry(
             synthesis_input.pattern.route_type,
             network_links,
             config,
+            cache,
         )
         for seq, (from_match, to_match) in enumerate(zip(matches[:-1], matches[1:], strict=True))
     )
@@ -528,25 +714,38 @@ def _candidate_links(
 def _preferred_segment_path(
     from_match: StopNetworkMatch,
     to_match: StopNetworkMatch,
-    modal_links: gpd.GeoDataFrame,
+    route_type: int,
+    network_links: gpd.GeoDataFrame,
     config: GTFSRouteSynthesisConfig,
+    cache: GTFSRouteSynthesisCache | None = None,
 ) -> tuple[tuple[tuple[int, ...], tuple[int, ...], float] | None, str | None]:
     if not _priority_context_supported(from_match, to_match):
         return None, FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED
 
-    priority_links = modal_links[_priority_mask(modal_links, config)]
-    if priority_links.empty:
-        return None, FALLBACK_PREFERRED_UNAVAILABLE
+    if cache is not None:
+        priority_context = cache.priority_context(route_type)
+        if priority_context is None:
+            return None, FALLBACK_PREFERRED_UNAVAILABLE
+        priority_link_ids = set(priority_context.link_rows)
+    else:
+        links = _prepare_synthesis_links(network_links, config)
+        modal_links = links[links[config.mode_field].str.contains(mode_corresp[route_type], regex=False, na=False)]
+        priority_links = modal_links[_priority_mask(modal_links, config)]
+        if priority_links.empty:
+            return None, FALLBACK_PREFERRED_UNAVAILABLE
+        priority_link_ids = {int(row[config.link_id_field]) for _, row in priority_links.iterrows()}
 
-    priority_link_ids = {int(row[config.link_id_field]) for _, row in priority_links.iterrows()}
     from_candidates = tuple(candidate for candidate in from_match.candidates if candidate.link_id in priority_link_ids)
     to_candidates = tuple(candidate for candidate in to_match.candidates if candidate.link_id in priority_link_ids)
     if not from_candidates or not to_candidates:
         return None, FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED
 
-    link_rows = {int(row[config.link_id_field]): row for _, row in priority_links.iterrows()}
-    graph = _build_link_graph(priority_links, config)
-    path = _best_segment_path(from_candidates, to_candidates, graph, link_rows, config)
+    if cache is not None:
+        path = cache.best_path(route_type, from_candidates, to_candidates, priority_only=True)
+    else:
+        link_rows = {int(row[config.link_id_field]): row for _, row in priority_links.iterrows()}
+        graph = _build_link_graph(priority_links, config)
+        path = _best_segment_path(from_candidates, to_candidates, graph, link_rows, config)
     if path is None:
         return None, FALLBACK_PREFERRED_UNAVAILABLE
     return path, None
@@ -628,6 +827,8 @@ def _best_segment_path(
     graph: dict[int, list[tuple]],
     link_rows: dict[int, object],
     config: GTFSRouteSynthesisConfig,
+    dijkstra_cache: dict[int, tuple[dict[int, float], dict[int, list[tuple[int, int]]]]] | None = None,
+    dijkstra_stats_callback=None,
 ) -> tuple[tuple[int, ...], tuple[int, ...], float] | None:
     direct = _direct_shared_link_path(from_candidates, to_candidates, link_rows, config)
     if direct is not None:
@@ -642,7 +843,7 @@ def _best_segment_path(
         for origin_node, origin_link_id, origin_direction, origin_cost in _origin_states(
             origin_candidate, link_rows, config
         ):
-            distances, paths = _dijkstra(origin_node, graph)
+            distances, paths = _cached_dijkstra(origin_node, graph, dijkstra_cache, dijkstra_stats_callback)
             for destination_node, destination_link_id, destination_direction, destination_cost in destination_states:
                 if destination_node not in distances:
                     continue
@@ -659,6 +860,25 @@ def _best_segment_path(
     link_ids = tuple(link_id for link_id, _ in best_path)
     directions = tuple(direction for _, direction in best_path)
     return link_ids, directions, best_distance
+
+
+def _cached_dijkstra(
+    origin_node: int,
+    graph: dict[int, list[tuple]],
+    dijkstra_cache: dict[int, tuple[dict[int, float], dict[int, list[tuple[int, int]]]]] | None,
+    stats_callback=None,
+) -> tuple[dict[int, float], dict[int, list[tuple[int, int]]]]:
+    if dijkstra_cache is None:
+        return _dijkstra(origin_node, graph)
+    if origin_node in dijkstra_cache:
+        if stats_callback is not None:
+            stats_callback(True)
+        return dijkstra_cache[origin_node]
+    if stats_callback is not None:
+        stats_callback(False)
+    result = _dijkstra(origin_node, graph)
+    dijkstra_cache[origin_node] = result
+    return result
 
 
 def _direct_shared_link_path(
@@ -828,6 +1048,8 @@ __all__ = [
     "GEOMETRY_SOURCE_REJECTED",
     "GEOMETRY_SOURCE_SHAPE",
     "GTFSGeometrySourceInventory",
+    "GTFSRouteSynthesisCache",
+    "GTFSRouteSynthesisCacheStats",
     "GTFSRouteSynthesisConfig",
     "FALLBACK_PREFERRED_EXCESSIVE_DETOUR",
     "FALLBACK_PREFERRED_UNAVAILABLE",

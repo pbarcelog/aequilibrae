@@ -51,5 +51,32 @@
   `preferred-path-unavailable` and one `preferred-path-exceeds-detour-ratio`.
 - The sample exposed that trim-covered patterns can retain only one stop. Such patterns cannot yield assignment-ready
   route geometry, so synthesis now rejects them as `insufficient-retained-stops`.
-- Performance warning: the current spike rebuilds its Python routing graph for each segment, making Karlsruhe-scale
-  synthesis slow. Graph and stop-match caching should be added before a full 288-pattern review or persistence wiring.
+- Performance warning from the initial sample: rebuilding Python routing state for each segment made Karlsruhe-scale
+  synthesis too slow. This motivated the review-scale cache below before a full 288-pattern review.
+
+## Review-Scale Synthesis Caching
+
+- `GTFSRouteSynthesisCache` now prepares network links once and reuses stop matches, route-type modal graphs,
+  route-type priority graphs, repeated stop-pair path results, and Dijkstra trees by route type and origin node across
+  pattern synthesis calls.
+- The cache exposes lightweight counters for stop-match hits/misses, graph builds, and path hits/misses so diagnostic
+  runs can report whether the full Karlsruhe review is using the intended reuse path.
+- `synthesize_inferred_pattern_geometry`, `match_stop_to_network`, and `infer_stop_to_stop_segment` remain usable without
+  an explicit cache, but review-scale runs should create one cache per projected network/configuration and pass it to
+  every pattern synthesis call.
+
+## Karlsruhe Full No-Shapes Review Checkpoint
+
+- A full review over all 288 coverage-accepted Karlsruhe GTFS patterns completed with one shared
+  `GTFSRouteSynthesisCache`.
+- Results: 194 accepted synthesized patterns and 94 rejected patterns.
+- Pattern sources: 128 `inferred-fallback`, 66 `inferred-preferred`, and 94 `rejected`.
+- Rejection reason: all 94 rejected patterns had `insufficient-retained-stops` after coverage trimming.
+- Segment sources among accepted patterns: 727 `inferred-fallback` and 631 `inferred-preferred`.
+- Segment fallback reasons: 680 `priority-context-unsupported`, 37 `preferred-path-unavailable`, and 10
+  `preferred-path-exceeds-detour-ratio`; 631 preferred segments had no fallback reason.
+- Cache counters: 928 stop-match hits, 624 stop-match misses, 6 graph builds, 1,137 path hits, 899 path misses,
+  1,622 Dijkstra-tree hits, and 1,357 Dijkstra-tree misses.
+- Runtime was about 513 seconds including GTFS text scanning, coverage analysis, projection, and synthesis. This is
+  practical for a diagnostic checkpoint but still not fast enough to treat as the final import path without further
+  profiling or moving more routing work into existing graph machinery.

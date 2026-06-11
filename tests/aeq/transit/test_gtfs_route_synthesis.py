@@ -22,6 +22,7 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     GEOMETRY_SOURCE_INFERRED_PREFERRED,
     GEOMETRY_SOURCE_INFERRED_FALLBACK,
     GEOMETRY_SOURCE_REJECTED,
+    GTFSRouteSynthesisCache,
     GTFSRouteSynthesisConfig,
     PatternMappingRow,
     REJECT_DISCONNECTED_STOP_PAIR,
@@ -345,6 +346,30 @@ def test_priority_extraction_uses_configurable_fields_and_values():
     assert to_match.candidates[1].is_priority
     assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED
     assert segment.link_ids == (20, 21)
+
+
+def test_synthesis_cache_reuses_stop_matches_graphs_and_stop_pair_paths():
+    links = _network_links()
+    pattern = _pattern("R1", ("A", "B", "C"))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {
+        1: SimpleNamespace(geo=Point(0, 0)),
+        2: SimpleNamespace(geo=Point(100, 0)),
+        3: SimpleNamespace(geo=Point(200, 0)),
+    }
+    cache = GTFSRouteSynthesisCache(links)
+
+    first = synthesize_inferred_pattern_geometry(synthesis_input, stops, links, pattern_id=1001, cache=cache)
+    second = synthesize_inferred_pattern_geometry(synthesis_input, stops, links, pattern_id=1002, cache=cache)
+    stats = cache.stats
+
+    assert first.accepted
+    assert second.accepted
+    assert stats.stop_match_misses == 3
+    assert stats.stop_match_hits == 3
+    assert stats.graph_builds == 1
+    assert stats.path_misses == 2
+    assert stats.path_hits == 2
 
 
 def _pattern(route_id, stop_ids):
