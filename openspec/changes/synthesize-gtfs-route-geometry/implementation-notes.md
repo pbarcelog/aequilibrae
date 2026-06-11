@@ -37,3 +37,19 @@
 - Preferred paths are selected when they are within `preferred_path_detour_ratio` of the fallback path. Otherwise the
   fallback path is used and diagnostics report either unavailable preferred routing, unsupported priority context, or an
   excessive preferred detour.
+
+## Karlsruhe No-Shapes Sample Checkpoint
+
+- A bounded sample over the first 40 coverage-accepted Karlsruhe GTFS patterns used the scratch GeoJSON-derived project
+  `.karlsruhe-geojson-default-modes-20260610-apply-2`, service date `2026-06-10`, and projected both network links and
+  stops to a metre CRS before synthesis.
+- Coverage reproduced the prior checkpoint: 288 accepted patterns from 73 fully-covered and 215 trim-covered patterns,
+  with 1,615 internal-gap and 19 network-discontinuity rejected patterns.
+- Initial sample result before the one-stop fix: 40/40 sampled patterns connected, with 38 inferred-fallback patterns
+  and 2 inferred-preferred patterns. Segment sources were 120 inferred-fallback and 14 inferred-preferred.
+- Segment fallback reasons in that sample were mostly `priority-context-unsupported`, plus a few
+  `preferred-path-unavailable` and one `preferred-path-exceeds-detour-ratio`.
+- The sample exposed that trim-covered patterns can retain only one stop. Such patterns cannot yield assignment-ready
+  route geometry, so synthesis now rejects them as `insufficient-retained-stops`.
+- Performance warning: the current spike rebuilds its Python routing graph for each segment, making Karlsruhe-scale
+  synthesis slow. Graph and stop-match caching should be added before a full 288-pattern review or persistence wiring.

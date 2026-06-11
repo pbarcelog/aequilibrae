@@ -37,6 +37,7 @@ REJECT_UNSUPPORTED_ROUTE_TYPE = "unsupported-route-type"
 REJECT_UNMATCHED_STOP = "unmatched-stop"
 REJECT_DISCONNECTED_STOP_PAIR = "disconnected-stop-pair"
 REJECT_EXCESSIVE_SEGMENT_DISTANCE = "path-exceeds-maximum-distance"
+REJECT_INSUFFICIENT_RETAINED_STOPS = "insufficient-retained-stops"
 
 FALLBACK_PREFERRED_UNAVAILABLE = "preferred-path-unavailable"
 FALLBACK_PREFERRED_EXCESSIVE_DETOUR = "preferred-path-exceeds-detour-ratio"
@@ -340,6 +341,20 @@ def synthesize_inferred_pattern_geometry(
     config = GTFSRouteSynthesisConfig() if config is None else config
     retained_stop_ids = synthesis_input.retained_stop_ids
     retained_internal_stop_ids = synthesis_input.retained_internal_stop_ids
+    if len(retained_stop_ids) < 2:
+        return SynthesizedPatternGeometry(
+            pattern=synthesis_input.pattern,
+            coverage_decision=synthesis_input.coverage_decision,
+            retained_stop_ids=retained_stop_ids,
+            retained_internal_stop_ids=retained_internal_stop_ids,
+            segments=(),
+            pattern_mapping=(),
+            geometry=None,
+            geometry_source=GEOMETRY_SOURCE_REJECTED,
+            accepted=False,
+            rejection_reason=REJECT_INSUFFICIENT_RETAINED_STOPS,
+        )
+
     matches = [
         match_stop_to_network(
             stop_id,
@@ -820,6 +835,7 @@ __all__ = [
     "PatternMappingRow",
     "REJECT_DISCONNECTED_STOP_PAIR",
     "REJECT_EXCESSIVE_SEGMENT_DISTANCE",
+    "REJECT_INSUFFICIENT_RETAINED_STOPS",
     "REJECT_UNMATCHED_STOP",
     "REJECT_UNSUPPORTED_ROUTE_TYPE",
     "RoutePatternSynthesisInput",

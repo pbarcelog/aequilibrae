@@ -26,6 +26,7 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     PatternMappingRow,
     REJECT_DISCONNECTED_STOP_PAIR,
     REJECT_EXCESSIVE_SEGMENT_DISTANCE,
+    REJECT_INSUFFICIENT_RETAINED_STOPS,
     REJECT_UNMATCHED_STOP,
     SEGMENT_OK,
     SEGMENT_REJECTED,
@@ -230,6 +231,20 @@ def test_synthesize_inferred_pattern_geometry_rejects_unmatched_stops():
     assert result.geometry_source == GEOMETRY_SOURCE_REJECTED
     assert result.rejection_reason == REJECT_UNMATCHED_STOP
     assert result.diagnostics[0].status == SEGMENT_REJECTED
+
+
+def test_synthesize_inferred_pattern_geometry_rejects_single_retained_stop():
+    links = _network_links()
+    pattern = _pattern("R1", ("A",))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {1: SimpleNamespace(geo=Point(0, 0))}
+
+    result = synthesize_inferred_pattern_geometry(synthesis_input, stops, links)
+
+    assert not result.accepted
+    assert result.rejection_reason == REJECT_INSUFFICIENT_RETAINED_STOPS
+    assert result.segments == ()
+    assert result.pattern_mapping == ()
 
 
 def test_infer_stop_to_stop_segment_rejects_disconnected_stop_pairs():
