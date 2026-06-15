@@ -102,6 +102,27 @@
   conservative coverage review separate from inferred route generation and gives future import wiring an explicit mode
   boundary.
 
+## Accepted Synthesis Persistence Adapter
+
+- `GTFSRouteSystemBuilder.apply_synthesized_route_geometries()` now adapts accepted `SynthesizedPatternGeometry`
+  results onto the existing in-memory `Pattern`, `Trip`, and `Link` objects before `save_to_disk()`.
+- Rejected or unsynthesized patterns are pruned from `select_patterns`, `select_trips`, and `select_links` when this
+  adapter is used. Accepted patterns receive synthesized route geometry, WKB-backed `pattern_mapping` rows, synthesized
+  route-link geometries, and trips/schedules trimmed to retained stops.
+- The adapter reuses the current persistence methods for `routes`, `route_links`, `pattern_mapping`, `trips`, and
+  `trips_schedule`; it does not add new database tables or direct SQL write paths.
+
+## Shape-Guided Happy Path
+
+- `resolve_pattern_loaded_shape()` selects the first loaded GTFS shape referenced by a pattern trip.
+- `build_route_map_matcher()` prepares a route-type modal matcher for retained pattern stops.
+- `synthesize_shape_guided_pattern_geometry()` map-matches each consecutive retained stop pair against the source shape
+  and classifies accepted segments as `gtfs-shape`.
+- `synthesize_pattern_geometry()` prefers the shape-guided branch when a loaded shape exists and falls back to
+  stop-to-stop inference with `shape-guided-unavailable` diagnostics when shape matching fails.
+- Shape rejection reasons include `shape-disconnected-match` and `shape-route-type-incompatible`.
+- A real local `shapes.txt` feed is still absent; synthetic fixtures and monkeypatched matcher tests cover the branch.
+
 ## Diagnostic Persistence Decision
 
 - Per-segment quality diagnostics will remain in memory and/or report artifacts for this change.

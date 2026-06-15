@@ -25,6 +25,26 @@ network. Missing coverage may be trimmed only at the beginning or end of a patte
 coverage gaps and internal modal discontinuities are rejected rather than simplified into a
 substitute route.
 
+When coverage-approved patterns are synthesized for assignment-ready import, AequilibraE records
+geometry sources and quality diagnostics rather than treating inferred paths as authoritative
+truth. The supported synthesis modes are:
+
+* ``gtfs-shape``: GTFS ``shapes.txt`` guides map matching when trips reference a loaded shape and
+  the shape can be matched to a connected route-type-compatible link sequence.
+* ``inferred-preferred``: stop-to-stop network inference prefers higher-priority or main-street
+  links when they stay within the configured detour ratio.
+* ``inferred-fallback``: stop-to-stop inference uses the shortest compatible modal path when
+  preferred routing is unavailable, unsupported by stop context, or too circuitous.
+* ``rejected``: a pattern or segment cannot be matched, connected, or kept within configured
+  thresholds.
+
+No-shape feeds are common in practice. The inference workflow is intentionally qualitative: it
+builds a first assignment-usable draft from ordered stops and the project network, exposes
+fallback and rejection reasons, and does not guarantee real-world vehicle paths. When a feed
+references GTFS shapes but shape-guided matching fails, synthesis falls back to stop-to-stop
+inference and records ``shape-guided-unavailable`` in the diagnostics. A real local feed with
+``shapes.txt`` remains an important validation target for tuning the shape-guided branch.
+
 VISUM SQLite public-transport import is intended for projects whose private network has already
 been imported from the same VISUM SQLite source with preserved VISUM node, link, and zone
 identifiers. It reads supported operators, stop points, line routes, time profiles, vehicle

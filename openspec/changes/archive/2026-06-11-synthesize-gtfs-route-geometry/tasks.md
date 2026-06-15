@@ -7,11 +7,11 @@
 
 ## 2. Shape-Guided Happy Path
 
-- [ ] 2.1 Implement shape-guided route synthesis when GTFS `shapes.txt` is present and trips reference usable shape IDs.
-- [ ] 2.2 Validate shape-guided link sequences for route-type compatibility, connectivity, and retained stop coverage.
-- [ ] 2.3 Add diagnostics for missing shapes, shape mismatch, disconnected shape matches, and route-type incompatibility.
-- [ ] 2.4 Add tests for successful shape-guided synthesis and fallback from unusable shapes.
-- [ ] 2.5 Record the lack of a real local `shapes.txt` example as a validation todo and keep synthetic coverage explicit.
+- [x] 2.1 Implement shape-guided route synthesis when GTFS `shapes.txt` is present and trips reference usable shape IDs.
+- [x] 2.2 Validate shape-guided link sequences for route-type compatibility, connectivity, and retained stop coverage.
+- [x] 2.3 Add diagnostics for missing shapes, shape mismatch, disconnected shape matches, and route-type incompatibility.
+- [x] 2.4 Add tests for successful shape-guided synthesis and fallback from unusable shapes.
+- [x] 2.5 Record the lack of a real local `shapes.txt` example as a validation todo and keep synthetic coverage explicit.
 
 ## 3. Stop-To-Stop Inference
 
@@ -31,7 +31,7 @@
 
 ## 5. Persistence And Review Checkpoint
 
-- [ ] 5.1 Wire accepted synthesized patterns into GTFS import persistence for `routes`, `route_links`, `pattern_mapping`, trips, and schedules.
+- [x] 5.1 Wire accepted synthesized patterns into GTFS import persistence for `routes`, `route_links`, `pattern_mapping`, trips, and schedules.
 - [x] 5.2 Keep diagnostic-only analysis available separately from inference/import mode.
 - [x] 5.3 Produce quality summaries by pattern, route, route type, geometry source, fallback reason, and rejection reason.
 - [x] 5.4 Add graph, stop-match, and repeated stop-pair caching for practical review-scale no-shapes synthesis.
@@ -40,8 +40,8 @@
 
 ## 6. Documentation And Validation
 
-- [ ] 6.1 Document GTFS geometry synthesis modes: source-shaped, inferred-preferred, inferred-fallback, and rejected.
-- [ ] 6.2 Document the qualitative-modeling assumptions and limitations for no-shape GTFS feeds.
-- [ ] 6.3 Run focused transit synthesis tests and relevant GTFS import/map-matching tests.
-- [ ] 6.4 Run relevant GeoJSON/network integration tests for route-type mode alignment and network graph compatibility.
-- [ ] 6.5 Run OpenSpec validation/status checks and confirm the change is apply-ready or apply-complete according to scope.
+- [x] 6.1 Document GTFS geometry synthesis modes: source-shaped, inferred-preferred, inferred-fallback, and rejected.
+- [x] 6.2 Document the qualitative-modeling assumptions and limitations for no-shape GTFS feeds.
+- [x] 6.3 Run focused transit synthesis tests and relevant GTFS import/map-matching tests.
+- [x] 6.4 Run relevant GeoJSON/network integration tests for route-type mode alignment and network graph compatibility.
+- [x] 6.5 Run OpenSpec validation/status checks and confirm the change is apply-ready or apply-complete according to scope.

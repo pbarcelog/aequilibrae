@@ -1,10 +1,20 @@
 import pytest
 import geopandas as gpd
+import pandas as pd
 from shapely.geometry import LineString, Point
 from types import SimpleNamespace
 
 from aequilibrae.project.database_connection import database_connection
 from aequilibrae.transit.lib_gtfs import GTFSRouteSystemBuilder
+from aequilibrae.transit.gtfs_coverage import GTFSRoutePattern
+from aequilibrae.transit.gtfs_route_synthesis import (
+    GEOMETRY_SOURCE_INFERRED_FALLBACK,
+    GEOMETRY_SOURCE_REJECTED,
+    PatternMappingRow,
+    SegmentPathDiagnostics,
+    SynthesizedPatternGeometry,
+    SynthesizedSegmentPath,
+)
 
 
 @pytest.fixture(scope="function")
@@ -117,6 +127,57 @@ def test_builds_map_matchers_uses_gtfs_route_type_modal_subgraphs(monkeypatch):
     assert all(matcher.initialized for matcher in builder.map_matchers.values())
 
 
+def test_apply_synthesized_route_geometries_prunes_and_prepares_existing_persistence_objects():
+    builder = object.__new__(GTFSRouteSystemBuilder)
+    pattern = SimpleNamespace(pattern_id=101, shape=None, pattern_mapping=pd.DataFrame(), links=[], route_type=3)
+    rejected_pattern = SimpleNamespace(pattern_id=202, shape=None, pattern_mapping=pd.DataFrame(), links=[])
+    accepted_trip = SimpleNamespace(
+        trip="T-accepted",
+        pattern_id=101,
+        stops=[9, 1, 2, 10],
+        arrivals=[90, 100, 200, 300],
+        departures=[91, 101, 201, 301],
+        source_time=["x", "a", "b", "y"],
+    )
+    rejected_trip = SimpleNamespace(
+        trip="T-rejected",
+        pattern_id=202,
+        stops=[3, 4],
+        arrivals=[100, 200],
+        departures=[101, 201],
+        source_time=["c", "d"],
+    )
+    builder.srid = 4326
+    builder.select_patterns = {101: pattern, 202: rejected_pattern}
+    builder.select_trips = [accepted_trip, rejected_trip]
+    builder.select_links = {"old": SimpleNamespace(pattern_id=101)}
+
+    accepted = _synthesized_builder_result("R1", "T-accepted", accepted=True)
+    rejected = _synthesized_builder_result("R2", "T-rejected", accepted=False)
+
+    builder.apply_synthesized_route_geometries([accepted, rejected])
+
+    assert builder.select_patterns == {101: pattern}
+    assert builder.select_trips == [accepted_trip]
+    assert accepted_trip.stops == [1, 2]
+    assert accepted_trip.arrivals == [100, 200]
+    assert accepted_trip.departures == [101, 201]
+    assert accepted_trip.source_time == ["a", "b"]
+    assert pattern.shape == accepted.geometry
+    assert pattern.pattern_mapping[["pattern_id", "seq", "link_id", "dir"]].to_dict("records") == [
+        {"pattern_id": 101, "seq": 0, "link_id": 10, "dir": 1}
+    ]
+    assert pattern.pattern_mapping.loc[0, "wkb"] == accepted.pattern_mapping[0].geometry.wkb
+    assert len(pattern.links) == 1
+    assert len(builder.select_links) == 1
+    route_link = next(iter(builder.select_links.values()))
+    assert route_link.pattern_id == 101
+    assert route_link.seq == 0
+    assert route_link.from_stop == 1
+    assert route_link.to_stop == 2
+    assert route_link.geo == accepted.segments[0].geometry
+
+
 def test_set_agency_identifier(route_system_builder):
     assert route_system_builder.gtfs_data.agency.agency != "CTA"
     route_system_builder.set_agency_identifier("CTA")
@@ -162,3 +223,60 @@ def test_save_to_disk(route_system_builder):
         assert len(transit_conn.execute("SELECT * FROM route_links").fetchall()) == 78
         assert len(transit_conn.execute("SELECT * FROM trips;").fetchall()) == 360
         assert len(transit_conn.execute("SELECT * FROM routes;").fetchall()) == 2
+
+
+def _synthesized_builder_result(route_id, trip_id, accepted):
+    pattern = GTFSRoutePattern(
+        route_id=route_id,
+        route_type=3,
+        direction_id=0,
+        stop_ids=("A", "B"),
+        internal_stop_ids=(1, 2),
+        trip_ids=(trip_id,),
+        internal_route_id=1,
+    )
+    if not accepted:
+        return SynthesizedPatternGeometry(
+            pattern=pattern,
+            coverage_decision=None,
+            retained_stop_ids=(),
+            retained_internal_stop_ids=(),
+            segments=(),
+            pattern_mapping=(),
+            geometry=None,
+            geometry_source=GEOMETRY_SOURCE_REJECTED,
+            accepted=False,
+            rejection_reason="rejected",
+        )
+
+    geometry = LineString([(0.0, 0.0), (0.01, 0.0)])
+    diagnostic = SegmentPathDiagnostics(
+        seq=0,
+        from_stop_id="A",
+        to_stop_id="B",
+        geometry_source=GEOMETRY_SOURCE_INFERRED_FALLBACK,
+    )
+    segment = SynthesizedSegmentPath(
+        seq=0,
+        from_stop_id="A",
+        to_stop_id="B",
+        from_internal_stop_id=1,
+        to_internal_stop_id=2,
+        link_ids=(10,),
+        directions=(1,),
+        geometry=geometry,
+        geometry_source=GEOMETRY_SOURCE_INFERRED_FALLBACK,
+        diagnostics=diagnostic,
+    )
+    return SynthesizedPatternGeometry(
+        pattern=pattern,
+        coverage_decision=None,
+        retained_stop_ids=("A", "B"),
+        retained_internal_stop_ids=(1, 2),
+        segments=(segment,),
+        pattern_mapping=(PatternMappingRow(pattern_id=-1, seq=0, link_id=10, direction=1, geometry=geometry),),
+        geometry=geometry,
+        geometry_source=GEOMETRY_SOURCE_INFERRED_FALLBACK,
+        accepted=True,
+        diagnostics=(diagnostic,),
+    )

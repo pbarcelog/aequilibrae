@@ -11,6 +11,7 @@ from aequilibrae.log import logger
 from aequilibrae.context import get_active_project
 from aequilibrae.transit.constants import Constants, PATTERN_ID_MULTIPLIER
 from aequilibrae.transit.functions.get_srid import get_srid
+from aequilibrae.transit.gtfs_route_synthesis import SynthesizedPatternGeometry
 from aequilibrae.transit.transit_elements import Link, Pattern, mode_corresp
 from aequilibrae.utils.aeq_signal import SIGNAL, simple_progress
 from aequilibrae.utils.interface.worker_thread import WorkerThread
@@ -277,6 +278,45 @@ class GTFSRouteSystemBuilder(WorkerThread):
             msg = "    Some stops are outside the zoning system. Check the result on a map and see the log for info"
             self.logger.warning(msg)
 
+    def apply_synthesized_route_geometries(self, synthesized_patterns: list[SynthesizedPatternGeometry]) -> None:
+        """Replace GTFS stop-based route geometry with accepted synthesized network geometry before persistence."""
+
+        trip_by_source_id = {str(trip.trip): trip for trip in self.select_trips}
+        accepted_pattern_ids = set()
+        selected_trips = []
+        synthesized_links = {}
+
+        for synthesized in synthesized_patterns:
+            if not synthesized.accepted:
+                continue
+            matching_trips = tuple(
+                trip_by_source_id[str(trip_id)]
+                for trip_id in synthesized.pattern.trip_ids
+                if str(trip_id) in trip_by_source_id
+            )
+            if not matching_trips:
+                continue
+
+            pattern_id = matching_trips[0].pattern_id
+            pattern = self.select_patterns.get(pattern_id)
+            if pattern is None:
+                continue
+
+            accepted_pattern_ids.add(pattern_id)
+            self.__apply_synthesized_pattern(pattern, synthesized, pattern_id)
+            for trip in matching_trips:
+                self.__trim_trip_to_synthesized_stops(trip, synthesized.retained_internal_stop_ids)
+                selected_trips.append(trip)
+            synthesized_links.update(self.__synthesized_route_links(synthesized, pattern_id))
+
+        self.select_trips = selected_trips
+        self.select_patterns = {
+            pattern_id: pattern
+            for pattern_id, pattern in self.select_patterns.items()
+            if pattern_id in accepted_pattern_ids
+        }
+        self.select_links = synthesized_links
+
     def __build_data(self):
         self.logger.debug("Starting __build_data")
         self.__get_routes_by_date()
@@ -361,6 +401,73 @@ class GTFSRouteSystemBuilder(WorkerThread):
             self.select_links[link.key] = link
 
         return p
+
+    def __apply_synthesized_pattern(
+        self, pattern: Pattern, synthesized: SynthesizedPatternGeometry, pattern_id: int
+    ) -> None:
+        pattern.shape = synthesized.geometry
+        pattern.links = []
+        rows = []
+        for row in synthesized.pattern_mapping:
+            mapping = {
+                "pattern_id": pattern_id,
+                "seq": row.seq,
+                "link_id": row.link_id,
+                "dir": row.direction,
+                "wkb": None if row.geometry is None else row.geometry.wkb,
+                "srid": self.srid,
+            }
+            rows.append(mapping)
+        pattern.pattern_mapping = pd.DataFrame(rows, columns=["pattern_id", "seq", "link_id", "wkb", "dir", "srid"])
+
+    def __synthesized_route_links(
+        self, synthesized: SynthesizedPatternGeometry, pattern_id: int
+    ) -> dict[str, Link]:
+        links = {}
+        for segment in synthesized.segments:
+            link = Link(self.srid)
+            link.pattern_id = pattern_id
+            link.seq = segment.seq
+            link.get_link_id()
+            link.from_stop = segment.from_internal_stop_id
+            link.to_stop = segment.to_internal_stop_id
+            link.geo = segment.geometry
+            link.type = int(synthesized.pattern.route_type)
+            links[link.key] = link
+            self.select_patterns[pattern_id].links.append(link.transit_link)
+        return links
+
+    def __trim_trip_to_synthesized_stops(self, trip, retained_internal_stop_ids: tuple[int, ...]) -> None:
+        original_stop_count = len(trip.stops)
+        positions = self.__retained_trip_positions(trip.stops, retained_internal_stop_ids)
+        if positions is None:
+            return
+        trip.stops = [trip.stops[position] for position in positions]
+        trip.arrivals = [trip.arrivals[position] for position in positions]
+        trip.departures = [trip.departures[position] for position in positions]
+        if len(getattr(trip, "source_time", [])) == original_stop_count:
+            trip.source_time = [trip.source_time[position] for position in positions]
+
+    def __retained_trip_positions(
+        self, trip_stops: list[int], retained_internal_stop_ids: tuple[int, ...]
+    ) -> list[int] | None:
+        retained = list(retained_internal_stop_ids)
+        if not retained:
+            return None
+        for start in range(len(trip_stops) - len(retained) + 1):
+            if [int(stop_id) for stop_id in trip_stops[start : start + len(retained)]] == retained:
+                return list(range(start, start + len(retained)))
+
+        positions = []
+        start = 0
+        for retained_stop in retained:
+            try:
+                position = [int(stop_id) for stop_id in trip_stops[start:]].index(retained_stop) + start
+            except ValueError:
+                return None
+            positions.append(position)
+            start = position + 1
+        return positions
 
     def __build_route_shape(self, patterns) -> MultiLineString:
         shapes = [p.best_shape() for p in patterns if p.best_shape() is not None]

@@ -20,17 +20,20 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     FALLBACK_PREFERRED_EXCESSIVE_DETOUR,
     FALLBACK_PREFERRED_UNAVAILABLE,
     FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED,
+    FALLBACK_SHAPE_UNAVAILABLE,
     GEOMETRY_MODE_DIAGNOSTIC_ONLY,
     GEOMETRY_MODE_INFER_NETWORK,
     GEOMETRY_SOURCE_INFERRED_PREFERRED,
     GEOMETRY_SOURCE_INFERRED_FALLBACK,
     GEOMETRY_SOURCE_REJECTED,
+    GEOMETRY_SOURCE_SHAPE,
     GTFSRouteSynthesisCache,
     GTFSRouteSynthesisConfig,
     PatternMappingRow,
     REJECT_DISCONNECTED_STOP_PAIR,
     REJECT_EXCESSIVE_SEGMENT_DISTANCE,
     REJECT_INSUFFICIENT_RETAINED_STOPS,
+    REJECT_SHAPE_DISCONNECTED,
     REJECT_UNMATCHED_STOP,
     SEGMENT_OK,
     SEGMENT_REJECTED,
@@ -41,9 +44,12 @@ from aequilibrae.transit.gtfs_route_synthesis import (
     inventory_gtfs_geometry_sources,
     match_stop_to_network,
     plan_gtfs_route_geometry,
+    resolve_pattern_loaded_shape,
     route_pattern_synthesis_inputs,
     summarize_synthesized_patterns,
     synthesize_inferred_pattern_geometry,
+    synthesize_pattern_geometry,
+    synthesize_shape_guided_pattern_geometry,
 )
 
 
@@ -303,6 +309,7 @@ def test_synthesize_inferred_pattern_geometry_assembles_mapping_and_rejects_none
     assert result.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
     assert [row.link_id for row in result.pattern_mapping] == [10, 11]
     assert [row.seq for row in result.pattern_mapping] == [0, 1]
+    assert all(row.geometry is not None for row in result.pattern_mapping)
     assert len(result.segments) == 2
     assert all(diagnostic.status == SEGMENT_OK for diagnostic in result.diagnostics)
 
@@ -441,6 +448,117 @@ def test_priority_extraction_uses_configurable_fields_and_values():
     assert to_match.candidates[1].is_priority
     assert segment.geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED
     assert segment.link_ids == (20, 21)
+
+
+def test_resolve_pattern_loaded_shape_returns_first_loaded_trip_shape(shape_bearing_gtfs_data):
+    patterns = build_gtfs_route_patterns(shape_bearing_gtfs_data)
+    pattern_with_shape = next(pattern for pattern in patterns if pattern.stop_ids == ("A", "B"))
+
+    shape = resolve_pattern_loaded_shape(shape_bearing_gtfs_data, pattern_with_shape)
+
+    assert shape is not None
+    assert list(shape.coords) == [(0, 0), (1, 1)]
+
+
+def test_synthesize_shape_guided_pattern_geometry_uses_map_matcher(monkeypatch):
+    class FakeRouteMapMatcher:
+        def __init__(self, *args, **kwargs):
+            self.crs = args[0].crs
+
+        def initialize_graph(self):
+            return None
+
+        def map_match_route(self, route_stops, route_shape=None, pattern_id=None):
+            if route_shape is None:
+                return pd.DataFrame({"link_id": [], "dir": []})
+            return pd.DataFrame({"link_id": [10], "dir": [1]})
+
+        def assemble_shape(self, df):
+            return LineString([(0, 0), (100, 0)])
+
+    monkeypatch.setattr("aequilibrae.transit.gtfs_route_synthesis.RouteMapMatcher", FakeRouteMapMatcher)
+
+    links = _network_links()
+    pattern = _pattern("R1", ("A", "B"))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {1: SimpleNamespace(geo=Point(0, 0)), 2: SimpleNamespace(geo=Point(100, 0))}
+    route_shape = LineString([(0, 0), (100, 0)])
+
+    result = synthesize_shape_guided_pattern_geometry(synthesis_input, stops, route_shape, links, pattern_id=1001)
+
+    assert result.accepted
+    assert result.geometry_source == GEOMETRY_SOURCE_SHAPE
+    assert result.pattern_mapping[0].link_id == 10
+    assert result.segments[0].diagnostics.flags == ("shape-guided",)
+
+
+def test_synthesize_pattern_geometry_falls_back_when_shape_match_fails(
+    monkeypatch, shape_bearing_gtfs_data
+):
+    class FailingRouteMapMatcher:
+        def __init__(self, *args, **kwargs):
+            self.crs = args[0].crs
+
+        def initialize_graph(self):
+            return None
+
+        def map_match_route(self, route_stops, route_shape=None, pattern_id=None):
+            return pd.DataFrame({"link_id": [], "dir": []})
+
+        def assemble_shape(self, df):
+            return LineString()
+
+    monkeypatch.setattr("aequilibrae.transit.gtfs_route_synthesis.RouteMapMatcher", FailingRouteMapMatcher)
+
+    patterns = build_gtfs_route_patterns(shape_bearing_gtfs_data)
+    pattern = next(pattern for pattern in patterns if pattern.stop_ids == ("A", "B"))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {
+        1: SimpleNamespace(geo=Point(0, 0)),
+        2: SimpleNamespace(geo=Point(100, 0)),
+    }
+    links = _network_links()
+
+    result = synthesize_pattern_geometry(
+        synthesis_input,
+        stops,
+        links,
+        gtfs_data=shape_bearing_gtfs_data,
+        pattern_id=1001,
+    )
+
+    assert result.accepted
+    assert result.geometry_source == GEOMETRY_SOURCE_INFERRED_FALLBACK
+    assert result.diagnostics[0].reason == FALLBACK_SHAPE_UNAVAILABLE
+
+
+def test_synthesize_shape_guided_pattern_geometry_rejects_disconnected_shape_match(monkeypatch):
+    class FailingRouteMapMatcher:
+        def __init__(self, *args, **kwargs):
+            self.crs = args[0].crs
+
+        def initialize_graph(self):
+            return None
+
+        def map_match_route(self, route_stops, route_shape=None, pattern_id=None):
+            return pd.DataFrame({"link_id": [], "dir": []})
+
+        def assemble_shape(self, df):
+            return LineString()
+
+    monkeypatch.setattr("aequilibrae.transit.gtfs_route_synthesis.RouteMapMatcher", FailingRouteMapMatcher)
+
+    links = _network_links()
+    pattern = _pattern("R1", ("A", "B"))
+    synthesis_input = _synthesis_input(pattern)
+    stops = {1: SimpleNamespace(geo=Point(0, 0)), 2: SimpleNamespace(geo=Point(100, 0))}
+
+    result = synthesize_shape_guided_pattern_geometry(
+        synthesis_input, stops, LineString([(0, 0), (100, 0)]), links
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == REJECT_SHAPE_DISCONNECTED
 
 
 def test_synthesis_cache_reuses_stop_matches_graphs_and_stop_pair_paths():

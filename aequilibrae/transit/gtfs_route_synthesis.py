@@ -7,7 +7,9 @@ from typing import Iterable
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import LineString
+import shapely.ops
+from pyproj import Transformer
+from shapely.geometry import LineString, Point
 from shapely.ops import linemerge
 
 from aequilibrae.transit.gtfs_coverage import (
@@ -20,7 +22,9 @@ from aequilibrae.transit.gtfs_coverage import (
     StopCoverage,
     build_gtfs_route_patterns,
 )
+from aequilibrae.transit.route_map_matcher import RouteMapMatcher
 from aequilibrae.transit.transit_elements.mode_correspondence import mode_corresp
+from aequilibrae.utils.geo_utils import metre_crs_for_gdf
 
 GEOMETRY_SOURCE_SHAPE = "gtfs-shape"
 GEOMETRY_SOURCE_INFERRED_PREFERRED = "inferred-preferred"
@@ -40,7 +44,11 @@ REJECT_UNMATCHED_STOP = "unmatched-stop"
 REJECT_DISCONNECTED_STOP_PAIR = "disconnected-stop-pair"
 REJECT_EXCESSIVE_SEGMENT_DISTANCE = "path-exceeds-maximum-distance"
 REJECT_INSUFFICIENT_RETAINED_STOPS = INSUFFICIENT_RETAINED_STOPS
+REJECT_SHAPE_MISSING = "shape-missing"
+REJECT_SHAPE_DISCONNECTED = "shape-disconnected-match"
+REJECT_SHAPE_ROUTE_TYPE = "shape-route-type-incompatible"
 
+FALLBACK_SHAPE_UNAVAILABLE = "shape-guided-unavailable"
 FALLBACK_PREFERRED_UNAVAILABLE = "preferred-path-unavailable"
 FALLBACK_PREFERRED_EXCESSIVE_DETOUR = "preferred-path-exceeds-detour-ratio"
 FALLBACK_PRIORITY_CONTEXT_UNSUPPORTED = "priority-context-unsupported"
@@ -569,6 +577,265 @@ def infer_stop_to_stop_segment(
     )
 
 
+def resolve_pattern_loaded_shape(gtfs_data, pattern: GTFSRoutePattern) -> LineString | None:
+    """Return the first loaded GTFS shape referenced by a pattern trip, if any."""
+
+    shapes = getattr(gtfs_data, "shapes", {})
+    if not shapes:
+        return None
+    for trip_id in pattern.trip_ids:
+        trip = _trip_lookup(gtfs_data).get(str(trip_id))
+        if trip is None:
+            continue
+        shape_id = _trip_shape_id(trip)
+        if shape_id and shape_id in shapes:
+            shape = shapes[shape_id]
+            if shape is not None and not getattr(shape, "is_empty", False):
+                return shape
+    return None
+
+
+def build_route_map_matcher(
+    network_links: gpd.GeoDataFrame,
+    stop_records: Iterable[tuple[str, object]],
+    route_type: int,
+    network_nodes: gpd.GeoDataFrame | None = None,
+) -> RouteMapMatcher | None:
+    """Build a route-type map matcher for the retained GTFS stops used in shape-guided synthesis."""
+
+    if route_type not in mode_corresp:
+        return None
+    pt_mode = mode_corresp[route_type]
+    links = network_links[network_links["modes"].astype(str).str.contains(pt_mode, regex=False, na=False)].copy()
+    if links.empty:
+        return None
+    if "speed_ab" not in links.columns:
+        links["speed_ab"] = 30.0
+    if "speed_ba" not in links.columns:
+        links["speed_ba"] = 30.0
+    if "distance" not in links.columns:
+        links["distance"] = links.geometry.length
+
+    if network_nodes is None:
+        network_nodes = _nodes_from_links(links)
+    else:
+        node_ids = set(links.a_node.astype(int)) | set(links.b_node.astype(int))
+        network_nodes = network_nodes[network_nodes.node_id.isin(node_ids)]
+
+    stop_rows = []
+    for stop_id, geometry in stop_records:
+        if geometry is None or getattr(geometry, "is_empty", False):
+            continue
+        stop_rows.append({"stop_id": str(stop_id), "geometry": geometry})
+    if len(stop_rows) < 2:
+        return None
+
+    stops_gdf = gpd.GeoDataFrame(stop_rows, geometry="geometry", crs=network_links.crs)
+    if network_nodes.empty or stops_gdf.empty:
+        return None
+
+    matcher = RouteMapMatcher(links, network_nodes, stops_gdf)
+    matcher.initialize_graph()
+    return matcher
+
+
+def synthesize_shape_guided_pattern_geometry(
+    synthesis_input: RoutePatternSynthesisInput,
+    stops: dict[int, object],
+    route_shape: LineString,
+    network_links: gpd.GeoDataFrame,
+    pattern_id: int = -1,
+    network_nodes: gpd.GeoDataFrame | None = None,
+) -> SynthesizedPatternGeometry | None:
+    """Synthesize route geometry from GTFS ``shapes.txt`` using the existing map matcher."""
+
+    retained_stop_ids = synthesis_input.retained_stop_ids
+    retained_internal_stop_ids = synthesis_input.retained_internal_stop_ids
+    if len(retained_stop_ids) < 2:
+        return SynthesizedPatternGeometry(
+            pattern=synthesis_input.pattern,
+            coverage_decision=synthesis_input.coverage_decision,
+            retained_stop_ids=retained_stop_ids,
+            retained_internal_stop_ids=retained_internal_stop_ids,
+            segments=(),
+            pattern_mapping=(),
+            geometry=None,
+            geometry_source=GEOMETRY_SOURCE_REJECTED,
+            accepted=False,
+            rejection_reason=REJECT_INSUFFICIENT_RETAINED_STOPS,
+        )
+
+    route_type = synthesis_input.pattern.route_type
+    stop_records = []
+    for stop_id, internal_stop_id in zip(retained_stop_ids, retained_internal_stop_ids, strict=True):
+        stop = stops.get(internal_stop_id)
+        if stop is None or getattr(stop, "geo", None) is None:
+            return _shape_rejected_pattern(
+                synthesis_input,
+                retained_stop_ids,
+                retained_internal_stop_ids,
+                REJECT_SHAPE_DISCONNECTED,
+            )
+        stop_records.append((stop_id, stop.geo))
+
+    matcher = build_route_map_matcher(network_links, stop_records, route_type, network_nodes)
+    if matcher is None:
+        return _shape_rejected_pattern(
+            synthesis_input,
+            retained_stop_ids,
+            retained_internal_stop_ids,
+            REJECT_SHAPE_ROUTE_TYPE,
+        )
+
+    utm_zone = metre_crs_for_gdf(network_links)
+    to_matcher = Transformer.from_crs(network_links.crs, utm_zone, always_xy=True)
+    from_matcher = Transformer.from_crs(utm_zone, network_links.crs, always_xy=True)
+    route_shape_matcher = shapely.ops.transform(to_matcher.transform, route_shape)
+
+    config = GTFSRouteSynthesisConfig()
+    prepared_links = _prepare_synthesis_links(network_links, config)
+    modal_links = prepared_links[
+        prepared_links[config.mode_field].astype(str).str.contains(mode_corresp[route_type], regex=False, na=False)
+    ]
+    link_rows = {int(row[config.link_id_field]): row for _, row in modal_links.iterrows()}
+
+    segments = []
+    for seq in range(len(retained_stop_ids) - 1):
+        from_stop_id = retained_stop_ids[seq]
+        to_stop_id = retained_stop_ids[seq + 1]
+        from_internal = retained_internal_stop_ids[seq]
+        to_internal = retained_internal_stop_ids[seq + 1]
+        segment = _shape_guided_segment(
+            seq,
+            from_stop_id,
+            to_stop_id,
+            from_internal,
+            to_internal,
+            stops,
+            matcher,
+            route_shape_matcher,
+            to_matcher,
+            from_matcher,
+            link_rows,
+            config,
+        )
+        if segment is None:
+            return _shape_rejected_pattern(
+                synthesis_input,
+                retained_stop_ids,
+                retained_internal_stop_ids,
+                REJECT_SHAPE_DISCONNECTED,
+            )
+        segments.append(segment)
+
+    diagnostics = tuple(segment.diagnostics for segment in segments)
+    rejected = tuple(segment for segment in segments if segment.diagnostics.status == SEGMENT_REJECTED)
+    if rejected:
+        return _shape_rejected_pattern(
+            synthesis_input,
+            retained_stop_ids,
+            retained_internal_stop_ids,
+            rejected[0].diagnostics.reason or REJECT_SHAPE_DISCONNECTED,
+            segments=segments,
+            diagnostics=diagnostics,
+        )
+
+    mapping = _pattern_mapping_rows(pattern_id, tuple(segments))
+    geometry = _merge_segment_geometries(segment.geometry for segment in segments)
+    return SynthesizedPatternGeometry(
+        pattern=synthesis_input.pattern,
+        coverage_decision=synthesis_input.coverage_decision,
+        retained_stop_ids=retained_stop_ids,
+        retained_internal_stop_ids=retained_internal_stop_ids,
+        segments=tuple(segments),
+        pattern_mapping=mapping,
+        geometry=geometry,
+        geometry_source=GEOMETRY_SOURCE_SHAPE,
+        accepted=True,
+        diagnostics=diagnostics,
+    )
+
+
+def synthesize_pattern_geometry(
+    synthesis_input: RoutePatternSynthesisInput,
+    stops: dict[int, object],
+    network_links: gpd.GeoDataFrame,
+    gtfs_data=None,
+    pattern_id: int = -1,
+    config: GTFSRouteSynthesisConfig | None = None,
+    cache: GTFSRouteSynthesisCache | None = None,
+    network_nodes: gpd.GeoDataFrame | None = None,
+) -> SynthesizedPatternGeometry:
+    """Synthesize one GTFS pattern, preferring source shapes and falling back to network inference."""
+
+    route_shape = resolve_pattern_loaded_shape(gtfs_data, synthesis_input.pattern) if gtfs_data is not None else None
+    if route_shape is not None:
+        shape_result = synthesize_shape_guided_pattern_geometry(
+            synthesis_input,
+            stops,
+            route_shape,
+            network_links,
+            pattern_id=pattern_id,
+            network_nodes=network_nodes,
+        )
+        if shape_result is not None and shape_result.accepted:
+            return shape_result
+
+    inferred = synthesize_inferred_pattern_geometry(
+        synthesis_input,
+        stops,
+        network_links,
+        pattern_id=pattern_id,
+        config=config,
+        cache=cache,
+    )
+    if route_shape is not None and inferred.accepted:
+        diagnostics = tuple(
+            SegmentPathDiagnostics(
+                seq=diagnostic.seq,
+                from_stop_id=diagnostic.from_stop_id,
+                to_stop_id=diagnostic.to_stop_id,
+                status=diagnostic.status,
+                geometry_source=diagnostic.geometry_source,
+                reason=FALLBACK_SHAPE_UNAVAILABLE,
+                selected_path_distance=diagnostic.selected_path_distance,
+                preferred_path_distance=diagnostic.preferred_path_distance,
+                fallback_path_distance=diagnostic.fallback_path_distance,
+                detour_ratio=diagnostic.detour_ratio,
+                flags=(*diagnostic.flags, FALLBACK_SHAPE_UNAVAILABLE),
+            )
+            for diagnostic in inferred.diagnostics
+        )
+        segments = tuple(
+            SynthesizedSegmentPath(
+                seq=segment.seq,
+                from_stop_id=segment.from_stop_id,
+                to_stop_id=segment.to_stop_id,
+                from_internal_stop_id=segment.from_internal_stop_id,
+                to_internal_stop_id=segment.to_internal_stop_id,
+                link_ids=segment.link_ids,
+                directions=segment.directions,
+                geometry=segment.geometry,
+                geometry_source=segment.geometry_source,
+                diagnostics=diagnostics[segment.seq],
+            )
+            for segment in inferred.segments
+        )
+        return SynthesizedPatternGeometry(
+            pattern=inferred.pattern,
+            coverage_decision=inferred.coverage_decision,
+            retained_stop_ids=inferred.retained_stop_ids,
+            retained_internal_stop_ids=inferred.retained_internal_stop_ids,
+            segments=segments,
+            pattern_mapping=inferred.pattern_mapping,
+            geometry=inferred.geometry,
+            geometry_source=inferred.geometry_source,
+            accepted=True,
+            diagnostics=diagnostics,
+        )
+    return inferred
+
+
 def synthesize_inferred_pattern_geometry(
     synthesis_input: RoutePatternSynthesisInput,
     stops: dict[int, object],
@@ -1070,9 +1337,101 @@ def _segment_flags(geometry_source: str, fallback_reason: str | None) -> tuple[s
 
 
 def _pattern_geometry_source(segments: tuple[SynthesizedSegmentPath, ...]) -> str:
+    if segments and all(segment.geometry_source == GEOMETRY_SOURCE_SHAPE for segment in segments):
+        return GEOMETRY_SOURCE_SHAPE
     if segments and all(segment.geometry_source == GEOMETRY_SOURCE_INFERRED_PREFERRED for segment in segments):
         return GEOMETRY_SOURCE_INFERRED_PREFERRED
     return GEOMETRY_SOURCE_INFERRED_FALLBACK
+
+
+def _nodes_from_links(links: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    nodes: dict[int, Point] = {}
+    for _, row in links.iterrows():
+        coords = list(row.geometry.coords)
+        nodes.setdefault(int(row.a_node), Point(coords[0]))
+        nodes.setdefault(int(row.b_node), Point(coords[-1]))
+    if not nodes:
+        return gpd.GeoDataFrame(columns=["node_id", "geometry"], geometry="geometry", crs=links.crs)
+    return gpd.GeoDataFrame(
+        [{"node_id": node_id, "geometry": geometry} for node_id, geometry in nodes.items()],
+        geometry="geometry",
+        crs=links.crs,
+    )
+
+
+def _shape_rejected_pattern(
+    synthesis_input: RoutePatternSynthesisInput,
+    retained_stop_ids: tuple[str, ...],
+    retained_internal_stop_ids: tuple[int, ...],
+    rejection_reason: str,
+    segments: tuple[SynthesizedSegmentPath, ...] = (),
+    diagnostics: tuple[SegmentPathDiagnostics, ...] = (),
+) -> SynthesizedPatternGeometry:
+    return SynthesizedPatternGeometry(
+        pattern=synthesis_input.pattern,
+        coverage_decision=synthesis_input.coverage_decision,
+        retained_stop_ids=retained_stop_ids,
+        retained_internal_stop_ids=retained_internal_stop_ids,
+        segments=segments,
+        pattern_mapping=(),
+        geometry=None,
+        geometry_source=GEOMETRY_SOURCE_REJECTED,
+        accepted=False,
+        rejection_reason=rejection_reason,
+        diagnostics=diagnostics,
+    )
+
+
+def _shape_guided_segment(
+    seq: int,
+    from_stop_id: str,
+    to_stop_id: str,
+    from_internal_stop_id: int,
+    to_internal_stop_id: int,
+    stops: dict[int, object],
+    matcher: RouteMapMatcher,
+    route_shape,
+    to_matcher: Transformer,
+    from_matcher: Transformer,
+    link_rows: dict[int, object],
+    config: GTFSRouteSynthesisConfig,
+) -> SynthesizedSegmentPath | None:
+    from_geo = stops[from_internal_stop_id].geo
+    to_geo = stops[to_internal_stop_id].geo
+    stop_rows = [
+        {"stop_id": from_stop_id, "geometry": shapely.ops.transform(to_matcher.transform, from_geo)},
+        {"stop_id": to_stop_id, "geometry": shapely.ops.transform(to_matcher.transform, to_geo)},
+    ]
+    stops_gdf = gpd.GeoDataFrame(stop_rows, geometry="geometry", crs=matcher.crs)
+    matched = matcher.map_match_route(stops_gdf, route_shape, pattern_id=str(seq))
+    if matched.empty:
+        return None
+
+    link_ids = tuple(int(link_id) for link_id in matched.link_id)
+    directions = tuple(int(direction) for direction in matched.dir)
+    distance = sum(_link_cost(link_rows[link_id], config) for link_id in link_ids if link_id in link_rows)
+    geometry = shapely.ops.transform(from_matcher.transform, matcher.assemble_shape(matched))
+    diagnostics = SegmentPathDiagnostics(
+        seq=seq,
+        from_stop_id=from_stop_id,
+        to_stop_id=to_stop_id,
+        status=SEGMENT_OK,
+        geometry_source=GEOMETRY_SOURCE_SHAPE,
+        selected_path_distance=distance if distance > 0 else None,
+        flags=("shape-guided",),
+    )
+    return SynthesizedSegmentPath(
+        seq=seq,
+        from_stop_id=from_stop_id,
+        to_stop_id=to_stop_id,
+        from_internal_stop_id=from_internal_stop_id,
+        to_internal_stop_id=to_internal_stop_id,
+        link_ids=link_ids,
+        directions=directions,
+        geometry=geometry,
+        geometry_source=GEOMETRY_SOURCE_SHAPE,
+        diagnostics=diagnostics,
+    )
 
 
 def _build_link_graph(modal_links: gpd.GeoDataFrame, config: GTFSRouteSynthesisConfig) -> dict[int, list[tuple]]:
@@ -1277,6 +1636,7 @@ def _pattern_mapping_rows(
                     seq=len(rows),
                     link_id=link_id,
                     direction=direction,
+                    geometry=segment.geometry,
                 )
             )
     return tuple(rows)
@@ -1334,8 +1694,14 @@ __all__ = [
     "REJECT_EXCESSIVE_SEGMENT_DISTANCE",
     "REJECT_INSUFFICIENT_RETAINED_STOPS",
     "REJECT_UNMATCHED_STOP",
+    "REJECT_SHAPE_DISCONNECTED",
+    "REJECT_SHAPE_MISSING",
+    "REJECT_SHAPE_ROUTE_TYPE",
     "REJECT_UNSUPPORTED_ROUTE_TYPE",
+    "FALLBACK_SHAPE_UNAVAILABLE",
     "RoutePatternSynthesisInput",
+    "build_route_map_matcher",
+    "resolve_pattern_loaded_shape",
     "SEGMENT_OK",
     "SEGMENT_REJECTED",
     "SEGMENT_UNTESTED",
@@ -1354,4 +1720,6 @@ __all__ = [
     "route_pattern_synthesis_inputs",
     "summarize_synthesized_patterns",
     "synthesize_inferred_pattern_geometry",
+    "synthesize_pattern_geometry",
+    "synthesize_shape_guided_pattern_geometry",
 ]
