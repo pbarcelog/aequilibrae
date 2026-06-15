@@ -218,8 +218,7 @@ def bulk_connector_creation(
         connectors.drop(columns=["geometry_x", "geometry_y"]), geometry="geometry", crs=project_links.crs
     )
 
-    # Links need new link_ids so just use the max + 1 as a starting point
-    max_link_id = project_links.link_id.max()
+    max_link_id = int(conn.execute("SELECT COALESCE(MAX(link_id), 0) FROM links").fetchone()[0])
     connectors["link_id"] = np.arange(max_link_id + 1, max_link_id + 1 + len(connectors))
 
     existing_connectors_sql = "UPDATE links SET modes=? WHERE link_id=?"
@@ -239,6 +238,66 @@ def bulk_connector_creation(
             .to_wkb()
             .to_records(index=False),
         )
+
+
+def insert_connector_pairs(
+    conn: Connection,
+    *,
+    project_nodes: gpd.GeoDataFrame,
+    project_links: gpd.GeoDataFrame,
+    pairs: pd.DataFrame,
+    modes: list[str],
+    existing_updates: pd.DataFrame | None = None,
+) -> None:
+    """Insert centroid connector links for explicit centroid-to-node pairs."""
+    mode_string = normalise_mode_strings(modes)
+    centroids = project_nodes.loc[project_nodes["is_centroid"] == 1, ["node_id", "geometry"]]
+    net_nodes = project_nodes.loc[project_nodes["is_centroid"] != 1, ["node_id", "geometry"]]
+
+    connectors = pairs[["a_node", "b_node"]].assign(modes=mode_string)
+    connectors = (
+        connectors.merge(centroids, left_on="a_node", right_on="node_id", how="inner")
+        .drop(columns="node_id")
+        .merge(net_nodes, left_on="b_node", right_on="node_id", how="inner")
+        .drop(columns="node_id")
+    )
+    connectors["geometry"] = connectors.apply(
+        lambda row: LineString((row.geometry_x, row.geometry_y)),
+        axis=1,
+        result_type="reduce",
+    )
+    connectors = gpd.GeoDataFrame(
+        connectors.drop(columns=["geometry_x", "geometry_y"]),
+        geometry="geometry",
+        crs=project_nodes.crs,
+    )
+
+    max_link_id = int(conn.execute("SELECT COALESCE(MAX(link_id), 0) FROM links").fetchone()[0])
+    connectors["link_id"] = np.arange(max_link_id + 1, max_link_id + 1 + len(connectors))
+
+    existing_connectors = existing_updates if existing_updates is not None else pd.DataFrame()
+    existing_connectors_sql = "UPDATE links SET modes=? WHERE link_id=?"
+    new_connectors_sql = (
+        f"INSERT INTO links "
+        f"(link_id, a_node, b_node, modes, direction, link_type, capacity_ab, capacity_ba, "
+        f"name, geometry) "
+        f"VALUES(?,?,?,?,0,'centroid_connector',{INFINITE_CAPACITY},{INFINITE_CAPACITY}, "
+        f"'centroid connector zone ' || ?2,GeomFromWKB(?, 4326))"
+    )
+    with conn:
+        if not existing_connectors.empty:
+            conn.executemany(
+                existing_connectors_sql,
+                existing_connectors[["modes", "link_id"]].to_records(index=False),
+            )
+        if not connectors.empty:
+            conn.executemany(
+                new_connectors_sql,
+                connectors[["link_id", "a_node", "b_node", "modes", "geometry"]]
+                .to_crs(4326)
+                .to_wkb()
+                .to_records(index=False),
+            )
 
 
 def k_nearest(
