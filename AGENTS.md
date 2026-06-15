@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for Codex, GitHub Copilot, and other coding agents working in this repository.
+Guidance for Codex, Cursor, GitHub Copilot, and other coding agents working in this repository.
 
 ## Document Roles
 
@@ -21,7 +21,8 @@ Keep `AGENTS.md` small. Use it to find the right context, not to carry every pro
 - For current capability behavior, read the relevant file under `openspec/specs/`.
 - For active sprint decisions, open questions, mapping contracts, reviewer notes, or implementation notes, read the relevant `openspec/changes/<change>/` folder.
 - For user workflows and examples, read `docs/source/` and the corresponding gallery example.
-- For generated or platform-specific agent behavior, use `.codex/skills/`, `.github/prompts/`, `.github/skills/`, and `.github/copilot-instructions.md`.
+- For generated or platform-specific agent behavior, use `.cursor/skills/` and `.cursor/commands/`,
+  `.codex/skills/`, `.github/prompts/`, `.github/skills/`, and `.github/copilot-instructions.md`.
 
 When new durable knowledge emerges, place it in the narrowest durable home: capability specs for behavior, `openspec/project.md` for architecture context, Sphinx docs for user-facing workflows, and change-local design notes for decisions that are not yet archived.
 
@@ -45,6 +46,7 @@ Performance-critical code uses Cython, C++17, and OpenMP. Be conservative around
 - `docs/` - Sphinx documentation source
 - `benchmarking/` - performance benchmarks
 - `openspec/` - OpenSpec project context, specs, and changes
+- `.cursor/skills/` and `.cursor/commands/` - OpenSpec skills and slash commands for Cursor
 - `.codex/skills/` - OpenSpec skills generated for Codex
 - `.github/prompts/` and `.github/skills/` - OpenSpec prompts/skills generated for GitHub Copilot
 - `.github/copilot-instructions.md` - additional project-specific guidance; consult it when details are missing here
