@@ -30,6 +30,15 @@ When new durable knowledge emerges, place it in the narrowest durable home: capa
 
 AequilibraE is a Python 3.10+ transportation modeling package. CI currently tests Python 3.10 through 3.14. The package includes traffic assignment, transit and GTFS tooling, trip distribution, matrix handling, geospatial import/export, and SQLite/SpatiaLite-backed project data.
 
+Recent import work supports **federated model assembly**: network (VISUM SQLite/GeoJSON), demand (OMX), and public transport (GTFS) may arrive from different sources without a shared identifier graph. When explicit VISUM topology or connectors are missing, the code falls back to geometry and documented heuristics (for example spread-based centroid connectors). Treat the following as the behavioural source of truth—not roadmap or backlog notes:
+
+- `openspec/specs/visum-geojson-import/spec.md`
+- `openspec/specs/visum-sqlite-import/spec.md`
+- `openspec/specs/visum-sqlite-transit-import/spec.md`
+- `openspec/specs/transit-gtfs/spec.md`
+- `openspec/specs/matrix-io/spec.md`
+- `openspec/specs/centroid-connector-inference/spec.md`
+
 Performance-critical code uses Cython, C++17, and OpenMP. Be conservative around algorithms, numerical behavior, database schemas, and bundled reference datasets.
 
 ## Repository Map
@@ -38,8 +47,8 @@ Performance-critical code uses Cython, C++17, and OpenMP. Be conservative around
   - `paths/` - graph building, path computation, VDFs, traffic assignment, Cython path algorithms
   - `distribution/` - gravity models and IPF
   - `matrix/` - AequilibraE matrix, OMX, sparse matrix types, Cython matrix code
-  - `project/` - project lifecycle, scenarios, network management, database schema, migrations, OSM/GMNS tools
-  - `transit/` - GTFS import, route systems, transit graph and assignment support
+  - `project/` - project lifecycle, scenarios, network management, database schema, migrations, OSM/GMNS tools, VISUM import, connector creation
+  - `transit/` - GTFS import, coverage filtering, route geometry synthesis, route systems, transit graph and assignment support
   - `utils/` - shared utilities and SimWrapper export
   - `reference_files/` - bundled sample/test datasets
 - `tests/` - pytest suite and test data
@@ -173,7 +182,7 @@ The wheel workflow currently builds wheels on Ubuntu, Windows, and Ubuntu ARM. T
 - Add focused tests for changed behavior.
 - Use existing pytest fixtures and sample data helpers from `conftest.py` and `tests/conftest.py`.
 - Integration tests may use bundled datasets such as `nauru.zip` and `sioux_falls.zip`.
-- For importer work, check for focused fixture tests and any opt-in smoke-test flags before assuming the full validation surface.
+- For importer work, check for focused fixture tests and any opt-in smoke-test flags before assuming the full validation surface. Karlsruhe VISUM GeoJSON connector validation is opt-in via `--visum-geojson-folder`.
 - Keep coverage above the configured threshold in `pyproject.toml`.
 - If full tests are too expensive, run the narrowest meaningful subset and say what remains unverified.
 

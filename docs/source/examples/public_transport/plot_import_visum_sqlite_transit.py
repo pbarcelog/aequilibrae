@@ -4,7 +4,7 @@
 Import public transport from VISUM SQLite
 =========================================
 
-This example creates a tiny VISUM-like SQLite export with a private network and
+This example creates a tiny VISUM-like SQLite export with a traffic network and
 public transport service data, then imports both into an AequilibraE project.
 """
 

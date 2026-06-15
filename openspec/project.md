@@ -1,12 +1,12 @@
 # AequilibraE Project Context
 
-Generated from a repository scan on 2026-05-21. Treat this as a brownfield orientation document for OpenSpec planning. It describes the current implementation shape; durable behavioral requirements should live in `openspec/specs/`.
+Generated from a repository scan on 2026-05-21 and refreshed for import capabilities in 2026-06. Treat this as a brownfield orientation document for OpenSpec planning. It describes the current implementation shape; durable behavioral requirements should live in `openspec/specs/`.
 
 ## Related Documents
 
 - `openspec/project.md` is the most detailed project-context snapshot for agents and spec planning.
 - `openspec/specs/*/spec.md` files are the canonical current-state behavioral specs, organized by capability.
-- `AGENTS.md` is the operational contract for Codex, GitHub Copilot, and other coding agents.
+- `AGENTS.md` is the operational contract for Codex, Cursor, GitHub Copilot, and other coding agents.
 - `README.md` is the public package overview and should stay concise.
 
 If these documents disagree, resolve the disagreement against implementation files, SQL schema, tests, and CI before updating the docs.
@@ -45,12 +45,12 @@ AequilibraE is a Python transportation modeling package. It supports project-bas
 - `aequilibrae/parameters.py` loads YAML parameters from the active project or from the package default `parameters.yml`.
 - `aequilibrae/project/` owns project lifecycle, database connections, schema creation, migrations, scenarios, matrices, results, zoning, and network APIs.
 - `aequilibrae/project/database_specification/` is the schema source of truth for project and transit databases.
-- `aequilibrae/project/network/` contains link/node/mode/link-type/period APIs plus OSM and GMNS builders/exporters.
+- `aequilibrae/project/network/` contains link/node/mode/link-type/period APIs, OSM and GMNS builders/exporters, VISUM SQLite and GeoJSON importers, and centroid connector creation (`connector_creation.py`, `spread_connector_creation.py`).
 - `aequilibrae/paths/` contains graph construction, path computation, skimming, all-or-nothing loading, traffic assignment, transit assignment, route choice, connectivity, and result objects.
 - `aequilibrae/paths/cython/` contains shortest path, graph compression, public transport, VDF, route choice, and path-file kernels.
 - `aequilibrae/distribution/` contains gravity application/calibration, synthetic gravity model, and IPF.
 - `aequilibrae/matrix/` contains the native matrix implementation and sparse/COO Cython helpers.
-- `aequilibrae/transit/` contains GTFS import, route-system reading/writing, transit elements, route map matching, transit graph building, and preloading.
+- `aequilibrae/transit/` contains GTFS import, GTFS-to-network coverage analysis, route geometry synthesis, route-system reading/writing, transit elements, route map matching, transit graph building, VISUM SQLite transit import, and preloading.
 - `aequilibrae/utils/` contains database/geospatial helpers, SpatiaLite utilities, example creation, Delaunay network creation, signals, QGIS adapter stubs, and SimWrapper export.
 - `aequilibrae/reference_files/` contains bundled blank/sample data files used to create examples and projects.
 - `tests/` mirrors major package areas and includes test project data, GTFS data, migration fixtures, shapefiles, SQLite projects, and path-file fixtures.
@@ -127,11 +127,28 @@ Triggers enforce much of the data integrity for spatial/network editing, includi
 
 - import OSM networks through Nominatim/Overpass, gridding large query areas when necessary;
 - import/export GMNS files;
+- import VISUM traffic networks from GeoJSON layers through `create_from_visum_geojson(...)`;
+- import VISUM traffic networks from SQLite through `create_from_visum_sqlite(...)`;
 - build mode-specific `Graph` instances from database links;
 - compute network extent and convex hull;
 - list modes and skimmable fields.
 
+VISUM importers validate topology from source identifiers (`FROMNODENO`, `TONODENO`, `ZONENO`, `NODENO`), preserve source metadata (`visum_node_no`, `visum_zone_no`, and related fields), support deterministic mode and link-type mapping, and report diagnostics for deferred or filtered source content. GeoJSON import expects conventional layer names; SQLite import reconstructs geometry from VISUM relational tables.
+
 `Links`, `Nodes`, `Modes`, `LinkTypes`, and `Periods` use table-gateway patterns: load structure through `TableLoader`, instantiate record objects on demand, cache edits in memory, and save through record APIs.
+
+### Import And Federated Model Assembly
+
+Network, demand, and public transport can be supplied from different sources without a single shared VISUM identifier graph. The supported posture is:
+
+- **Aligned VISUM exports:** use explicit source IDs and imported connectors when present.
+- **Disjoint artefacts:** combine network import, project matrix import (OMX/AEM), GTFS import, and connector completion separately.
+
+When centroid connectors are missing, `bulk_spread_connector_creation(...)` in `spread_connector_creation.py` can place spread, edge-biased connectors for internal zones with polygon geometry (perimeter-scaled counts, minimum spacing, optional demand-based count bump). External zones without local polygons still use global k-nearest attachment. k-nearest bulk connector creation remains available through `bulk_connector_creation(...)`.
+
+Matrix demand enters the project through `Matrices.import_file(...)` and the matrix registry. GTFS workflows can analyse network coverage, trim or reject patterns conservatively, and synthesize route geometry when shapes are absent.
+
+These import paths were developed and validated primarily against VISUM-oriented fixtures and Karlsruhe examples. Behavioural contracts live in `openspec/specs/`; portability to other origins is an ongoing validation concern, not a guarantee of this document.
 
 ### Graph And Assignment Architecture
 
@@ -158,17 +175,17 @@ Transit assignment uses `TransitClass`, `TransitAssignment`, `OptimalStrategies`
 
 ### Matrix Architecture
 
-`AequilibraeMatrix` supports memory-only matrices and file-backed matrices. Native `.aem` files use a binary layout with a fixed header, core metadata, index metadata, and matrix blocks. OMX support is provided through `openmatrix`. Computational views select cores used by assignment and skimming.
+`AequilibraeMatrix` supports memory-only matrices and file-backed matrices. Native `.aem` files use a binary layout with a fixed header, core metadata, index metadata, and matrix blocks. OMX support is provided through `openmatrix`. The project `matrices` gateway can import external `.omx` and `.aem` files into the project matrix folder and register them for assignment workflows. Computational views select cores used by assignment and skimming.
 
 Cython sparse matrix helpers wrap C++ vectors and can convert to/from SciPy sparse matrices or OMX datasets.
 
 ### Transit Architecture
 
-`Transit` ensures a `public_transport.sqlite` database exists when a project is loaded. It creates GTFS builders, imports route systems, creates/saves/removes/loads transit graphs by period, and can build transit preload vectors for traffic assignment.
+`Transit` ensures a `public_transport.sqlite` database exists when a project is loaded. It creates GTFS builders, imports route systems, imports VISUM SQLite public-transport service data when requested, creates/saves/removes/loads transit graphs by period, and can build transit preload vectors for traffic assignment.
 
 Transit tables include agencies, fares, links, nodes, stops, stop connectors, routes, route links, pattern mapping, trips, trip schedules, modes, node types, zones, trigger settings, and migrations. Transit route geometries use SpatiaLite `MULTILINESTRING`.
 
-GTFS import is represented through element classes (`Agency`, `Fare`, `Route`, `Pattern`, `Stop`, `Trip`, etc.), reader/writer modules, route map matching, and graph construction that links transit data to project network periods and zones.
+GTFS import is represented through element classes (`Agency`, `Fare`, `Route`, `Pattern`, `Stop`, `Trip`, etc.), reader/writer modules, route map matching, coverage analysis against the project network, route geometry synthesis when GTFS shapes are missing, and graph construction that links transit data to project network periods and zones.
 
 ## Build And Packaging
 
@@ -218,6 +235,7 @@ Important test patterns:
 - `faulthandler.enable()` is active in tests to improve diagnostics for native-code failures.
 - SQL table and trigger list consistency is tested in `tests/test_list_of_files.py`.
 - Tests cover distribution, matrix, path/assignment, project/database/network, transit, logging, and utilities.
+- VISUM GeoJSON connector-inference validation against Karlsruhe is opt-in via `--visum-geojson-folder` on selected project tests.
 
 ## Documentation
 
@@ -268,16 +286,22 @@ Use this file for orientation only. `README.md` may summarize this context publi
 - public API signatures, CLI entry points, examples, docs promises, or parameter semantics;
 - security-relevant handling of SQL, files, downloads, extensions, or untrusted serialized data.
 
-Current baseline specs:
+Current capability specs under `openspec/specs/`:
 
 - `openspec/specs/project-lifecycle/spec.md` - project creation, opening, scenarios, connections, and closure
 - `openspec/specs/network-datamodel/spec.md` - network tables, modes, zones, triggers, and import/export boundaries
 - `openspec/specs/graph-and-paths/spec.md` - graph preparation, centroids, compression, paths, and skims
 - `openspec/specs/traffic-assignment/spec.md` - traffic classes, VDFs, algorithms, results, skims, and reports
-- `openspec/specs/matrix-io/spec.md` - native matrices, OMX, computational views, project records, and sparse helpers
-- `openspec/specs/transit-gtfs/spec.md` - transit database, GTFS import, transit graphs, preload, and assignment
+- `openspec/specs/matrix-io/spec.md` - native matrices, OMX, project matrix import, computational views, and sparse helpers
+- `openspec/specs/transit-gtfs/spec.md` - transit database, GTFS import, coverage, geometry synthesis, transit graphs, preload, and assignment
 - `openspec/specs/database-migrations/spec.md` - migration listing, status tracking, ordering, execution, and upgrades
 - `openspec/specs/documentation-and-examples/spec.md` - Sphinx docs, API docstrings, doctests, gallery examples, and publishing
+- `openspec/specs/visum-geojson-import/spec.md` - VISUM GeoJSON traffic network import
+- `openspec/specs/visum-sqlite-import/spec.md` - VISUM SQLite traffic network import
+- `openspec/specs/visum-sqlite-transit-import/spec.md` - VISUM SQLite public-transport service import
+- `openspec/specs/centroid-connector-inference/spec.md` - spread-based centroid connector placement when connectors are missing
+
+Active OpenSpec changes under `openspec/changes/` (not yet archived) are separate future work and are not part of the merged baseline above.
 
 For each change, prefer a small capability-focused OpenSpec change over a broad rewrite. This codebase has many implicit contracts enforced by tests, SQL triggers, Cython memory layout, and docs examples.
 
@@ -291,4 +315,5 @@ For each change, prefer a small capability-focused OpenSpec change over a broad 
 - Matrix binary layout and OMX interoperability.
 - Scenario cloning and multi-database consistency.
 - GTFS import and transit graph persistence.
+- VISUM GeoJSON/SQLite import and federated connector completion.
 - Documentation doctests that execute real project workflows.

@@ -1,12 +1,14 @@
 # visum-geojson-import Specification
 
 ## Purpose
-TBD - created by archiving change add-visum-geojson-import-pipeline. Update Purpose after archive.
-## Requirements
-### Requirement: VISUM GeoJSON imports private-traffic network layers
-The system SHALL import VISUM GeoJSON private-traffic network layers into an AequilibraE project using deterministic layer and field mappings.
 
-#### Scenario: Importing required private network layers
+Import traffic network layers from GeoJSON into an AequilibraE project using deterministic source-ID topology, mode mapping, and diagnostics—without inferred spatial snapping. Developed against VISUM GeoJSON exports; imports multimodal network links and connectors (including bus, tram, and rail where mapped), not GTFS-style transit service.
+
+## Requirements
+### Requirement: VISUM GeoJSON imports traffic network layers
+The system SHALL import VISUM GeoJSON traffic network layers into an AequilibraE project using deterministic layer and field mappings.
+
+#### Scenario: Importing required traffic network layers
 - **WHEN** a VISUM GeoJSON import is requested with node, link, zone centroid, and connector layers
 - **THEN** the system SHALL read the layers through geospatial data-frame handling
 - **AND** create or update AequilibraE nodes, links, zones, centroids, and centroid connectors according to the configured mapping
@@ -94,7 +96,7 @@ link classes, and fields.
 - **AND** skip records whose transport systems are all filtered out, with diagnostics that identify the skipped scope
 
 #### Scenario: Mapping unknown transport systems
-- **WHEN** imported VISUM private-traffic or public-transport network layers contain source transport-system values
+- **WHEN** imported VISUM traffic network layers contain source transport-system values
   outside the effective mapping and outside the explicitly ignored set
 - **THEN** the system SHALL report the unmapped transport-system values encountered
 - **AND** require the caller to map, filter, or explicitly ignore those transport systems before import writes affected
@@ -124,20 +126,20 @@ link classes, and fields.
 - **AND** SHALL NOT require a runtime GenAI service to decide mappings
 
 ### Requirement: Assignment-ready fields are derived where possible
-The system SHALL derive private-traffic assignment fields from VISUM source values when the configured mapping provides enough information.
+The system SHALL derive network link assignment fields from VISUM source values when the configured mapping provides enough information.
 
 #### Scenario: Deriving directional network fields
 - **WHEN** VISUM link records include directional length, speed, capacity, and direction availability values
-- **THEN** the system SHALL derive numeric AequilibraE fields for private-traffic distance, speed, capacity, and free-flow time
+- **THEN** the system SHALL derive numeric AequilibraE fields for network link distance, speed, capacity, and free-flow time
 - **AND** represent directionality using AequilibraE direction and directional field conventions
 
 #### Scenario: Reporting non-assignment-ready records
-- **WHEN** a private-traffic link lacks required positive numeric time or capacity values for assignment
+- **WHEN** a network link lacks required positive numeric time or capacity values for assignment
 - **THEN** the system SHALL report the affected source records and fields
 - **AND** indicate whether graph building can proceed without traffic assignment readiness
 
 #### Scenario: Defaulting connector assignment fields
-- **WHEN** an imported VISUM connector has usable private-traffic modes and length but lacks exported assignment time, speed, or capacity fields
+- **WHEN** an imported VISUM connector has usable mapped network modes and length but lacks exported assignment time, speed, or capacity fields
 - **THEN** the system SHALL derive connector travel time from connector length using a deterministic fallback connector speed
 - **AND** assign a deterministic high fallback connector capacity
 - **AND** report that connector assignment defaults were applied
@@ -195,11 +197,11 @@ The system SHALL support both conventional folder-based VISUM GeoJSON import and
 - **AND** validate that each supplied file provides the expected layer type
 
 ### Requirement: Deferred VISUM layers are reported
-The system SHALL identify VISUM layers that are recognized but outside the private-traffic import scope.
+The system SHALL identify VISUM layers that are recognized but outside the traffic network import scope.
 
 #### Scenario: Encountering public transport layers
 - **WHEN** VISUM stop, stop-point, line-route, or public-transport-only layers are present
-- **THEN** the system SHALL report that those layers are recognized but not imported into the private-traffic network in this version
+- **THEN** the system SHALL report that those layers are recognized but not imported into the traffic network in this version
 
 #### Scenario: Encountering OD matrix files
 - **WHEN** demand matrix files are provided or discovered with the VISUM GeoJSON layers

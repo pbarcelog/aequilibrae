@@ -5,7 +5,7 @@ Importing a network from VISUM SQLite
 =====================================
 
 This example creates a tiny VISUM-like SQLite export locally and imports it as
-an AequilibraE private-traffic network.
+an AequilibraE traffic network.
 """
 
 from pathlib import Path

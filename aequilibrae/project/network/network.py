@@ -346,7 +346,7 @@ class Network(WorkerThread):
         connector_epsilon_minutes: float = 1e-6,
     ) -> VisumSQLiteReport:
         """
-        Creates an AequilibraE private-traffic network from a VISUM SQLite export.
+        Creates an AequilibraE traffic network from a VISUM SQLite export.
 
         :Arguments:
             **path** (:obj:`str` or :obj:`Path`): VISUM SQLite export file.
@@ -379,7 +379,7 @@ class Network(WorkerThread):
             ``duplicate_node_policy="offset"``.
 
             **connector_epsilon_minutes** (:obj:`float`, *Optional*): Positive travel-time cost used when a VISUM
-            SQLite connector explicitly stores zero private-traffic travel time.
+            SQLite connector explicitly stores zero travel time for a mapped transport system.
 
         :Returns:
             :class:`aequilibrae.project.network.visum_sqlite_importer.VisumSQLiteReport`: Import diagnostics,

@@ -119,7 +119,7 @@ Folder-based import recognizes conventional files named ``node.geojson``,
 names can be supplied with an explicit layer-to-path mapping.
 
 By default, supported VISUM transport systems are imported when they appear in
-``TSYSSET`` or ``R_TSYSSET``. The default mapping includes private traffic
+``TSYSSET`` or ``R_TSYSSET``. The default mapping includes motor-vehicle traffic
 (``CAR`` to ``c`` and ``HGV`` to ``h``), active and access systems (``BIKE`` to
 ``b``, ``WALK`` and ``PUTW`` to ``w``), and public transport systems aligned
 with GTFS route types (``BUS`` to ``t``, ``TRAM`` to ``l``, and ``TRAIN`` to
@@ -128,7 +128,7 @@ with GTFS route types (``BUS`` to ``t``, ``TRAM`` to ``l``, and ``TRAIN`` to
 
 Use ``transport_systems`` when only a subset of source systems should be
 imported. For example, ``transport_systems={"CAR", "HGV"}`` keeps a
-private-traffic import even when the GeoJSON source also contains public
+motor-vehicle-only import even when the GeoJSON source also contains public
 transport links. Any imported VISUM transport system outside the effective
 ``mode_mapping`` must be explicitly mapped, filtered out through
 ``transport_systems``, or explicitly ignored with ``ignored_transport_systems``
@@ -188,7 +188,7 @@ plugin repository. This Python package exposes the import API and documentation.
 Importing from VISUM SQLite
 ---------------------------
 
-VISUM SQLite private-traffic exports can be imported with
+VISUM SQLite traffic network exports can be imported with
 ``Project.network.create_from_visum_sqlite()``. The importer reads relational
 VISUM tables, reconstructs geometry, and then uses the same network-writing
 rules as the VISUM GeoJSON importer.
@@ -224,7 +224,7 @@ an equivalent GeoJSON import, preserved the source modal graph. The helper
 compares connectivity only; impedance differences from GeoJSON fallback values
 or SQLite epsilon connector costs should be checked separately.
 
-Public-transport service tables are not imported by this private-traffic network
+Transit service schedule tables are not imported by this traffic network
 endpoint. After importing the network, use
 ``Project.transit.import_from_visum_sqlite()`` to import supported VISUM
 operators, stops, line routes, time profiles, vehicle journeys, and schedules
@@ -235,7 +235,7 @@ identifier columns preserved by the network importer, including
 The transit import reports recognized but deferred VISUM public-transport
 features, such as detailed fares, transfer-walk-time rules, vehicle blocking,
 coupling, depot data, and detailed calendar semantics. Turn restrictions,
-detector data, and other non-transit VISUM tables remain outside the private
+detector data, and other non-transit VISUM tables remain outside the traffic
 network endpoint as well.
 
 .. seealso::

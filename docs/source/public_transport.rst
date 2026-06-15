@@ -45,13 +45,13 @@ references GTFS shapes but shape-guided matching fails, synthesis falls back to 
 inference and records ``shape-guided-unavailable`` in the diagnostics. A real local feed with
 ``shapes.txt`` remains an important validation target for tuning the shape-guided branch.
 
-VISUM SQLite public-transport import is intended for projects whose private network has already
+VISUM SQLite public-transport import is intended for projects whose traffic network has already
 been imported from the same VISUM SQLite source with preserved VISUM node, link, and zone
 identifiers. It reads supported operators, stop points, line routes, time profiles, vehicle
 journeys, and schedules into the same service tables used by GTFS imports, then relies on the
 existing transit graph and preload workflows.
 
-A typical VISUM SQLite workflow imports the private network first, then imports public transport
+A typical VISUM SQLite workflow imports the traffic network first, then imports public transport
 service data:
 
 .. code-block:: python

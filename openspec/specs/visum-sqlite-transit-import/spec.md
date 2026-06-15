@@ -1,7 +1,9 @@
 # visum-sqlite-transit-import Specification
 
 ## Purpose
-TBD - created by archiving change add-visum-sqlite-transit-import. Update Purpose after archive.
+
+Import VISUM SQLite public-transport service data into a project's transit database by mapping stops, lines, routes, and vehicle journeys to network records already imported with compatible VISUM source identifiers. Complements GTFS-based transit workflows; it does not replace GTFS import or route-geometry synthesis requirements under the transit GTFS capability.
+
 ## Requirements
 ### Requirement: VISUM SQLite transit source tables are validated
 The system SHALL validate required VISUM SQLite public-transport source tables before importing transit service data.

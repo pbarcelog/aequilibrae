@@ -68,11 +68,11 @@ The system SHALL publish documentation artifacts only through the configured CI 
 - **AND** publish release documentation only when required secrets are available
 
 ### Requirement: VISUM GeoJSON import is documented
-The system SHALL document the VISUM GeoJSON import workflow and its private-traffic scope.
+The system SHALL document the VISUM GeoJSON import workflow and its traffic network scope, including selectable transport modes on network links and deferral of transit service layers.
 
 #### Scenario: Documenting the import workflow
 - **WHEN** the VISUM GeoJSON import API is added
-- **THEN** user documentation SHALL describe required and optional layers, mapping configuration, CRS handling, assignment-ready field derivation, count-location import, and deferred public-transport and demand workflows
+- **THEN** user documentation SHALL describe required and optional layers, mapping configuration, CRS handling, assignment-ready field derivation, count-location import, multimodal network link modes, and deferred transit service and demand workflows
 
 #### Scenario: Providing an executable example
 - **WHEN** examples are updated for VISUM GeoJSON import
@@ -86,7 +86,7 @@ The system SHALL document the VISUM SQLite import workflow and its relationship 
 - **WHEN** the VISUM SQLite import API is added
 - **THEN** user documentation SHALL describe required and optional VISUM SQLite tables, CRS handling, mapping
   configuration, geometry reconstruction, assignment-field derivation, connector zero-time epsilon behavior,
-  count-location scope, and deferred public-transport and demand workflows
+  count-location scope, multimodal network link modes, and deferred transit service schedule tables and demand workflows
 
 #### Scenario: Documenting connectivity validation
 - **WHEN** VISUM SQLite import documentation is added

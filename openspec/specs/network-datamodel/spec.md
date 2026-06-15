@@ -93,9 +93,9 @@ The system SHALL support creating and exporting network data through supported e
 - **WHEN** GMNS import or export is requested
 - **THEN** the system SHALL map configured GMNS fields to or from AequilibraE network fields
 
-#### Scenario: Importing private traffic network data from VISUM GeoJSON
+#### Scenario: Importing traffic network data from VISUM GeoJSON
 
-- **WHEN** VISUM GeoJSON private-traffic import is requested
+- **WHEN** VISUM GeoJSON traffic network import is requested
 - **THEN** the system SHALL populate network links, nodes, zones, centroids, and connectors according to configured VISUM
   mappings
 - **AND** preserve source identifiers and imported count locations for traceability and validation
@@ -106,9 +106,9 @@ The system SHALL support creating and exporting network data through supported e
 - **AND** preserve zone centroids with adjusted coordinates when VISUM centroid coordinates collide with another imported
   node
 
-#### Scenario: Importing private traffic network data from VISUM SQLite
+#### Scenario: Importing traffic network data from VISUM SQLite
 
-- **WHEN** VISUM SQLite private-traffic import is requested
+- **WHEN** VISUM SQLite traffic network import is requested
 - **THEN** the system SHALL populate network links, nodes, zones, centroids, and connectors according to configured VISUM
   mappings
 - **AND** preserve source identifiers and supported count-location associations for traceability and validation

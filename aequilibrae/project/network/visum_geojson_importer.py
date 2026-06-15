@@ -668,7 +668,7 @@ class VisumGeoJSONImporter:
                         self.report.add(
                             "warning",
                             "non-assignment-ready",
-                            "Capacity is missing for an available private-traffic direction",
+                            "Capacity is missing for an available mapped traffic network direction",
                             layer=layer,
                             field=f"{prefix}CAPPRT",
                             source_id=source_id,
@@ -677,7 +677,7 @@ class VisumGeoJSONImporter:
                         self.report.add(
                             "warning",
                             "non-assignment-ready",
-                            "Free-flow time cannot be parsed or derived for an available private-traffic direction",
+                            "Free-flow time cannot be parsed or derived for an available mapped traffic network direction",
                             layer=layer,
                             field=f"{prefix}T0PRT",
                             source_id=source_id,

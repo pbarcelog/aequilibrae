@@ -1,10 +1,12 @@
 # visum-sqlite-import Specification
 
 ## Purpose
-TBD - created by archiving change add-visum-sqlite-import-pipeline. Update Purpose after archive.
+
+Import traffic network objects from a VISUM SQLite database into an AequilibraE project, reconstructing geometry and topology from relational tables with deterministic mappings and diagnostics. Developed against VISUM exports; multimodal network links and connectors, not public-transport schedule tables (those use the VISUM SQLite transit import capability).
+
 ## Requirements
-### Requirement: VISUM SQLite imports private-traffic network objects
-The system SHALL import VISUM SQLite private-traffic network objects into an AequilibraE project using deterministic
+### Requirement: VISUM SQLite imports traffic network objects
+The system SHALL import VISUM SQLite traffic network objects into an AequilibraE project using deterministic
 source-table mappings.
 
 #### Scenario: Importing required SQLite object tables
@@ -21,7 +23,7 @@ source-table mappings.
 #### Scenario: Reporting deferred VISUM SQLite tables
 - **WHEN** VISUM public-transport schedule, stop timing, vehicle journey, route-system, turn, fare, point-of-interest, or
   other unsupported source tables are present
-- **THEN** the system SHALL report that those tables are recognized but not imported into the private-traffic network in
+- **THEN** the system SHALL report that those tables are recognized but not imported into the traffic network in
   this version
 
 ### Requirement: VISUM SQLite topology is preserved from source identifiers
@@ -115,26 +117,26 @@ caller-provided overrides.
   rules
 
 ### Requirement: VISUM SQLite assignment fields use source values
-The system SHALL derive assignment-ready private-traffic fields from VISUM SQLite source assignment values where
+The system SHALL derive assignment-ready network link fields from VISUM SQLite source assignment values where
 available.
 
 #### Scenario: Deriving link assignment fields
 - **WHEN** a VISUM SQLite link direction includes positive length, speed, and capacity values
 - **THEN** the system SHALL derive numeric AequilibraE distance, speed, capacity, and free-flow travel-time fields for the
-  mapped private-traffic modes
+  mapped traffic modes
 
 #### Scenario: Using connector transport-system travel times
-- **WHEN** a VISUM SQLite connector includes `T0_TSYS(<transport system>)` for a mapped private-traffic mode
+- **WHEN** a VISUM SQLite connector includes `T0_TSYS(<transport system>)` for a mapped traffic mode
 - **THEN** the system SHALL use that source connector travel time for the imported connector direction
 - **AND** SHALL NOT replace it with the GeoJSON missing-field fallback behavior
 
 #### Scenario: Handling explicit zero connector travel times
-- **WHEN** a VISUM SQLite connector explicitly stores zero travel time for a mapped private-traffic transport system
+- **WHEN** a VISUM SQLite connector explicitly stores zero travel time for a mapped traffic transport system
 - **THEN** the system SHALL import a positive epsilon travel time suitable for AequilibraE graph and assignment algorithms
 - **AND** report diagnostics identifying the source connector and zero-time field
 
 #### Scenario: Reporting non-assignment-ready SQLite records
-- **WHEN** a mapped private-traffic SQLite link or connector lacks required positive capacity or computable time values
+- **WHEN** a mapped traffic SQLite link or connector lacks required positive capacity or computable time values
   after source-value and epsilon rules are applied
 - **THEN** the system SHALL report the affected source records and fields
 - **AND** indicate whether graph building can proceed without assignment readiness
